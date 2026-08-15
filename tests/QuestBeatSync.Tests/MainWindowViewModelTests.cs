@@ -122,6 +122,124 @@ public sealed class MainWindowViewModelTests
         Assert.HasCount(1, viewModel.PlaylistImportErrors);
     }
 
+    [TestMethod]
+    public async Task CompletedEnvironmentScan_CanBeFollowedByAnotherDeviceScan()
+    {
+        var first = new QuestDevice("FIRST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var second = new QuestDevice("SECOND", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var scanner = new CountingBeatSaberScanner();
+        var viewModel = CreateViewModel(new StubQuestTransport([first]), scanner);
+
+        await viewModel.InitializeAsync();
+        viewModel.SelectedDevice = second;
+        await scanner.SecondCall.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.AreEqual(2, scanner.CallCount);
+        Assert.AreEqual(second, viewModel.SelectedDevice);
+    }
+
+    [TestMethod]
+    public async Task RapidDeviceSwitch_CancelsPreviousScanAndKeepsLatestResult()
+    {
+        var first = new QuestDevice("FIRST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var second = new QuestDevice("SECOND", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var scanner = new OverlappingBeatSaberScanner();
+        var viewModel = CreateViewModel(new StubQuestTransport([]), scanner);
+
+        viewModel.SelectedDevice = first;
+        await scanner.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.SelectedDevice = second;
+        await Task.WhenAll(
+            scanner.FirstCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2)),
+            scanner.SecondCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+
+        Assert.AreEqual(second, viewModel.SelectedDevice);
+        Assert.IsTrue(viewModel.EnvironmentScanCompleted);
+        Assert.AreEqual("Beat Saber detected", viewModel.BeatSaberStatus);
+        Assert.IsFalse(viewModel.IsEnvironmentScanning);
+    }
+
+    private static MainWindowViewModel CreateViewModel(
+        IQuestTransport transport,
+        IQuestBeatSaberScanner scanner)
+    {
+        var options = new AdbQuestTransportOptions { AppDataToolsDirectory = "unused" };
+        var settingsStore = new AdbSettingsStore(Path.Combine(Path.GetTempPath(), "qbsync-unused-settings.json"));
+        return new MainWindowViewModel(
+            transport,
+            scanner,
+            new StubPlaylistImporter(),
+            new FakeBeatSaverClient(),
+            new FakeBeatMapCache(),
+            options,
+            settingsStore);
+    }
+
+    private sealed class CountingBeatSaberScanner : IQuestBeatSaberScanner
+    {
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public TaskCompletionSource SecondCall { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<QuestBeatSaberScanResult> ScanAsync(
+            QuestDevice device,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _callCount) == 2)
+            {
+                SecondCall.TrySetResult();
+            }
+
+            return Task.FromResult(QuestBeatSaberScanResult.Empty);
+        }
+    }
+
+    private sealed class OverlappingBeatSaberScanner : IQuestBeatSaberScanner
+    {
+        private int _callCount;
+
+        public TaskCompletionSource FirstStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource FirstCanceled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SecondCompleted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<QuestBeatSaberScanResult> ScanAsync(
+            QuestDevice device,
+            CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _callCount) == 1)
+            {
+                FirstStarted.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    FirstCanceled.TrySetResult();
+                    throw;
+                }
+            }
+
+            SecondCompleted.TrySetResult();
+            return new QuestBeatSaberScanResult(
+                true,
+                true,
+                true,
+                true,
+                true,
+                [],
+                []);
+        }
+    }
+
     private sealed class StubBeatSaberScanner(
         QuestBeatSaberScanResult? result = null) : IQuestBeatSaberScanner
     {

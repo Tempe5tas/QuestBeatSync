@@ -17,6 +17,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly AdbQuestTransportOptions _adbOptions;
     private readonly AdbSettingsStore _settingsStore;
     private LocalPlaylistLibraryState _localPlaylistState = new([]);
+    private readonly object _scanCancellationGate = new();
     private CancellationTokenSource? _scanCancellationSource;
     private NavigationItemViewModel? _selectedPage;
     private QuestDevice? _selectedDevice;
@@ -615,21 +616,27 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private async Task RefreshEnvironmentAsync(QuestDevice? device)
     {
-        _scanCancellationSource?.Cancel();
         var cancellationSource = new CancellationTokenSource();
-        _scanCancellationSource = cancellationSource;
-
-        EnvironmentError = null;
-        SetEnvironmentScanCompleted(false);
-        ApplyScanResult(QuestBeatSaberScanResult.Empty);
-        if (device?.IsConnected != true)
+        CancellationTokenSource? previousCancellationSource;
+        lock (_scanCancellationGate)
         {
-            return;
+            previousCancellationSource = _scanCancellationSource;
+            _scanCancellationSource = cancellationSource;
         }
 
-        IsEnvironmentScanning = true;
         try
         {
+            CancelSafely(previousCancellationSource);
+
+            EnvironmentError = null;
+            SetEnvironmentScanCompleted(false);
+            ApplyScanResult(QuestBeatSaberScanResult.Empty);
+            if (device?.IsConnected != true)
+            {
+                return;
+            }
+
+            IsEnvironmentScanning = true;
             var result = await _beatSaberScanner.ScanAsync(device, cancellationSource.Token);
             if (!cancellationSource.IsCancellationRequested)
             {
@@ -649,12 +656,39 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
         finally
         {
-            if (ReferenceEquals(_scanCancellationSource, cancellationSource))
+            var isCurrentOwner = false;
+            lock (_scanCancellationGate)
+            {
+                if (ReferenceEquals(_scanCancellationSource, cancellationSource))
+                {
+                    _scanCancellationSource = null;
+                    isCurrentOwner = true;
+                }
+            }
+
+            if (isCurrentOwner)
             {
                 IsEnvironmentScanning = false;
             }
 
             cancellationSource.Dispose();
+        }
+    }
+
+    private static void CancelSafely(CancellationTokenSource? cancellationSource)
+    {
+        if (cancellationSource is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cancellationSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The previous scan completed and disposed its source between owner exchange and cancellation.
         }
     }
 
