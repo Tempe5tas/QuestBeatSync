@@ -2,6 +2,7 @@ using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Scanning;
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace QuestBeatSync.Infrastructure.Execution;
 
@@ -11,6 +12,7 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
     private readonly IQuestTransport _transport;
     private readonly QuestBeatSaberPaths _paths;
     private readonly ConcurrentQueue<string> _diagnosticWarnings = new();
+    private readonly ConcurrentDictionary<Guid, byte> _ownedWriteSessions = new();
 
     public AdbQuestSyncTarget(IQuestTransport transport, QuestBeatSaberPaths paths)
     {
@@ -25,8 +27,9 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         return warnings;
     }
 
-    public async Task<QuestWritePreparationResult> PrepareForWritesAsync(
+    public async Task<QuestWritePreparationResult> BeginWriteSessionAsync(
         QuestDevice device,
+        Guid executionId,
         CancellationToken cancellationToken = default)
     {
         var help = await _transport.ExecuteShellAsync(
@@ -40,13 +43,72 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
                 "Quest toybox mv does not advertise the required -n and -T no-clobber promotion options.");
         }
 
-        var stop = await _transport.ExecuteShellAsync(
-            device,
-            ["am", "force-stop", BeatSaberPackage],
-            cancellationToken).ConfigureAwait(false);
-        return stop.IsSuccess
-            ? QuestWritePreparationResult.Ready
-            : QuestWritePreparationResult.Refused($"Could not stop Beat Saber: {Error(stop)}");
+        var lockPath = QuestExecutionPaths.WriterLock(_paths);
+        var acquireScript =
+            $"if mkdir {Quote(lockPath)}; then printf '%s' '__QBSYNC_ACQUIRED__'; " +
+            $"else rc=$?; if test -d {Quote(lockPath)}; then printf '%s' '__QBSYNC_LOCKED__'; " +
+            "else printf '__QBSYNC_ERROR__:%s' \"$rc\"; fi; fi";
+        var acquire = await RunScriptAsync(device, acquireScript, cancellationToken).ConfigureAwait(false);
+        EnsureProbeCommandSucceeded(acquire, "Could not acquire the QBSync writer lock.");
+        var outcome = acquire.StandardOutput.Trim();
+        if (outcome == "__QBSYNC_LOCKED__")
+        {
+            return QuestWritePreparationResult.Refused(
+                "Another QBSync write session appears to be active, or a previous run left a stale lock.");
+        }
+        if (outcome != "__QBSYNC_ACQUIRED__")
+            throw new QuestSyncTargetException($"Writer lock acquisition returned an unexpected result: {outcome}");
+
+        var session = new QuestWriteSession(executionId, device.Serial, lockPath);
+        if (!_ownedWriteSessions.TryAdd(executionId, 0))
+        {
+            await RunScriptAsync(device, $"rm -r {Quote(lockPath)}", CancellationToken.None).ConfigureAwait(false);
+            throw new InvalidOperationException("This execution already owns a writer session.");
+        }
+        try
+        {
+            await TryWriteLockMetadataAsync(device, session, cancellationToken).ConfigureAwait(false);
+            var stop = await _transport.ExecuteShellAsync(
+                device,
+                ["am", "force-stop", BeatSaberPackage],
+                cancellationToken).ConfigureAwait(false);
+            if (stop.IsSuccess) return QuestWritePreparationResult.Ready(session);
+
+            await EndWriteSessionAsync(device, session, CancellationToken.None).ConfigureAwait(false);
+            return QuestWritePreparationResult.Refused($"Could not stop Beat Saber: {Error(stop)}");
+        }
+        catch
+        {
+            await EndWriteSessionAsync(device, session, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task EndWriteSessionAsync(
+        QuestDevice device,
+        QuestWriteSession session,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var expectedPath = QuestExecutionPaths.WriterLock(_paths);
+        if (!string.Equals(session.DeviceSerial, device.Serial, StringComparison.Ordinal) ||
+            !string.Equals(session.LockPath, expectedPath, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Refusing to release a writer lock not owned by this device/session.");
+        }
+        if (!_ownedWriteSessions.TryRemove(session.ExecutionId, out _))
+            throw new InvalidOperationException("Refusing to release a writer lock not acquired by this target instance.");
+
+        try
+        {
+            var cleanup = await RunScriptAsync(device, $"rm -r {Quote(session.LockPath)}", cancellationToken).ConfigureAwait(false);
+            if (!cleanup.IsSuccess || await DirectoryExistsAsync(device, session.LockPath, cancellationToken).ConfigureAwait(false))
+                _diagnosticWarnings.Enqueue($"QBSync writer lock could not be released: {Error(cleanup)}");
+        }
+        catch (Exception exception)
+        {
+            _diagnosticWarnings.Enqueue($"QBSync writer lock could not be released: {exception.Message}");
+        }
     }
 
     public Task<bool> DirectoryExistsAsync(
@@ -108,8 +170,10 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         BeatMapIdentity expectedIdentity,
         CancellationToken cancellationToken = default)
     {
-        EnsureOwnedMapStaging(stagingPath);
         ArgumentNullException.ThrowIfNull(expectedIdentity);
+        var stagingIdentity = ParseOwnedMapStaging(stagingPath);
+        if (stagingIdentity != expectedIdentity)
+            throw new InvalidOperationException("Map staging identity does not match the requested map identity.");
         if (!await DirectoryExistsAsync(device, stagingPath, cancellationToken).ConfigureAwait(false)) return false;
         var files = await ListFilesRecursivelyAsync(device, stagingPath, cancellationToken).ConfigureAwait(false);
         return files.Any(path => string.Equals(RemoteName(path), "Info.dat", StringComparison.OrdinalIgnoreCase)) &&
@@ -122,8 +186,10 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         string finalPath,
         CancellationToken cancellationToken = default)
     {
-        EnsureOwnedMapStaging(stagingPath);
-        EnsureMapFinal(finalPath);
+        var stagingIdentity = ParseOwnedMapStaging(stagingPath);
+        var finalIdentity = ParseMapFinal(finalPath);
+        if (stagingIdentity != finalIdentity)
+            throw new InvalidOperationException("Map staging and final destination identities do not match.");
         if (await DirectoryExistsAsync(device, finalPath, cancellationToken).ConfigureAwait(false)) return false;
 
         var move = await RunScriptAsync(
@@ -187,17 +253,24 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         finally
         {
             if (stagingActive)
-                await AbandonPlaylistStagingAsync(device, stagingPath).ConfigureAwait(false);
+                await AbandonPlaylistStagingFailSoftAsync(device, stagingPath).ConfigureAwait(false);
         }
     }
 
-    private async Task AbandonPlaylistStagingAsync(QuestDevice device, string stagingPath)
+    private async Task AbandonPlaylistStagingFailSoftAsync(QuestDevice device, string stagingPath)
     {
-        if (!QuestExecutionPaths.IsOwnedPlaylistStagingPath(_paths, stagingPath))
-            throw new InvalidOperationException("Refusing to clean a playlist path not owned by this execution.");
-        var cleanup = await RunScriptAsync(device, $"rm -f {Quote(stagingPath)}", CancellationToken.None).ConfigureAwait(false);
-        if (!cleanup.IsSuccess && await FileExistsAsync(device, stagingPath, CancellationToken.None).ConfigureAwait(false))
-            _diagnosticWarnings.Enqueue($"Current playlist staging could not be cleaned: {Error(cleanup)}");
+        try
+        {
+            if (!QuestExecutionPaths.IsOwnedPlaylistStagingPath(_paths, stagingPath))
+                throw new InvalidOperationException("Refusing to clean a playlist path not owned by this execution.");
+            var cleanup = await RunScriptAsync(device, $"rm -f {Quote(stagingPath)}", CancellationToken.None).ConfigureAwait(false);
+            if (!cleanup.IsSuccess || await FileExistsAsync(device, stagingPath, CancellationToken.None).ConfigureAwait(false))
+                _diagnosticWarnings.Enqueue($"Current playlist staging could not be cleaned: {Error(cleanup)}");
+        }
+        catch (Exception exception)
+        {
+            _diagnosticWarnings.Enqueue($"Current playlist staging could not be cleaned: {exception.Message}");
+        }
     }
 
     private Task<bool> FileExistsAsync(QuestDevice device, string path, CancellationToken cancellationToken) =>
@@ -205,15 +278,50 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
 
     private async Task<bool> TestPathAsync(QuestDevice device, string test, string path, CancellationToken cancellationToken)
     {
-        var result = await RunScriptAsync(device, $"test {test} {Quote(path)}", cancellationToken).ConfigureAwait(false);
-        if (!result.AdbAvailable || result.TimedOut || result.ExitCode is null)
-            throw new QuestSyncTargetException(Error(result));
-        return result.ExitCode switch
+        var script =
+            $"if test {test} {Quote(path)}; then printf '%s' '__QBSYNC_EXISTS__'; " +
+            "else rc=$?; if [ \"$rc\" -eq 1 ]; then printf '%s' '__QBSYNC_MISSING__'; " +
+            "else printf '__QBSYNC_ERROR__:%s' \"$rc\"; fi; fi";
+        var result = await RunScriptAsync(device, script, cancellationToken).ConfigureAwait(false);
+        EnsureProbeCommandSucceeded(result, $"Could not inspect remote path {path}.");
+        return result.StandardOutput.Trim() switch
         {
-            0 => true,
-            1 => false,
-            _ => throw new QuestSyncTargetException(Error(result))
+            "__QBSYNC_EXISTS__" => true,
+            "__QBSYNC_MISSING__" => false,
+            var output => throw new QuestSyncTargetException($"Remote path probe returned an unexpected result: {output}")
         };
+    }
+
+    private async Task TryWriteLockMetadataAsync(
+        QuestDevice device,
+        QuestWriteSession session,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var metadata = JsonSerializer.Serialize(new
+            {
+                executionId = session.ExecutionId,
+                deviceSerial = session.DeviceSerial,
+                startedAtUtc = DateTimeOffset.UtcNow,
+                host = Environment.MachineName,
+                pid = Environment.ProcessId
+            });
+            var result = await RunScriptAsync(
+                device,
+                $"printf '%s' {Quote(metadata)} > {Quote($"{session.LockPath}/session.json")}",
+                cancellationToken).ConfigureAwait(false);
+            if (!result.IsSuccess)
+                _diagnosticWarnings.Enqueue($"QBSync writer lock metadata could not be written: {Error(result)}");
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _diagnosticWarnings.Enqueue($"QBSync writer lock metadata could not be written: {exception.Message}");
+        }
     }
 
     private async Task<IReadOnlyList<string>> ListFilesRecursivelyAsync(QuestDevice device, string path, CancellationToken cancellationToken)
@@ -238,12 +346,23 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
             throw new InvalidOperationException("Refusing to write or clean a map path not owned by this execution.");
     }
 
-    private void EnsureMapFinal(string path)
+    private BeatMapIdentity ParseOwnedMapStaging(string path)
     {
-        var parent = _paths.CustomLevels.TrimEnd('/');
-        var name = path.StartsWith($"{parent}/", StringComparison.Ordinal) ? path[(parent.Length + 1)..] : string.Empty;
-        if (!BeatSaverHash.IsValid(name) || name.Contains('/'))
+        if (!QuestExecutionPaths.TryParseOwnedMapStagingPath(_paths, path, out var identity, out _))
+            throw new InvalidOperationException("Refusing to use a map path not owned by this execution.");
+        return identity!;
+    }
+
+    private BeatMapIdentity ParseMapFinal(string path)
+    {
+        if (!QuestExecutionPaths.TryParseMapFinalPath(_paths, path, out var identity))
             throw new InvalidOperationException("Refusing to promote into a non-hash CustomLevels path.");
+        return identity!;
+    }
+
+    private static void EnsureProbeCommandSucceeded(AdbCommandResult result, string message)
+    {
+        if (!result.IsSuccess) throw new QuestSyncTargetException($"{message} {Error(result)}");
     }
 
     private static void EnsureSuccess(AdbCommandResult result, string message)

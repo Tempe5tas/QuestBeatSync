@@ -35,11 +35,13 @@ public sealed record SyncResult(
     IReadOnlyList<string> DiagnosticWarnings,
     string? Message = null);
 
-public sealed record QuestWritePreparationResult(bool IsReady, string? Message = null)
-{
-    public static QuestWritePreparationResult Ready { get; } = new(true);
+public sealed record QuestWriteSession(Guid ExecutionId, string DeviceSerial, string LockPath);
 
-    public static QuestWritePreparationResult Refused(string message) => new(false, message);
+public sealed record QuestWritePreparationResult(bool IsReady, QuestWriteSession? Session = null, string? Message = null)
+{
+    public static QuestWritePreparationResult Ready(QuestWriteSession session) => new(true, session);
+
+    public static QuestWritePreparationResult Refused(string message) => new(false, null, message);
 }
 
 public sealed record SyncProgress(

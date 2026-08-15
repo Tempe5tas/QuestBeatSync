@@ -85,31 +85,14 @@ public sealed class SyncExecutor
             return await RefuseAsync($"Playlist snapshot preparation failed: {exception.Message}").ConfigureAwait(false);
         }
 
-        if (results.Any(result => result.Operation.Kind is SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist))
-        {
-            progress?.Report(new SyncProgress("Stopping Beat Saber", 0, results.Length, "Stopping Beat Saber before Quest writes."));
-            try
-            {
-                var preparation = await _target.PrepareForWritesAsync(selectedDevice, cancellationToken).ConfigureAwait(false);
-                if (!preparation.IsReady)
-                    return await RefuseAsync(preparation.Message ?? "Quest write preparation was refused.").ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                CancelFrom(0);
-                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled before Quest writes began.").ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                return await RefuseAsync($"Could not prepare Quest writes: {exception.Message}").ConfigureAwait(false);
-            }
-        }
-
         var preparedMaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var blockedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
 
-        for (var index = 0; index < results.Length; index++)
+        // Phase C: all network/cache preparation completes while Beat Saber is still running
+        // and before the cooperative remote writer lock is acquired.
+        foreach (var index in Enumerable.Range(0, results.Length)
+                     .Where(index => results[index].Operation.Kind == SyncOperationKind.DownloadMap))
         {
             if (cancellationToken.IsCancellationRequested)
             {
@@ -118,29 +101,17 @@ public sealed class SyncExecutor
             }
 
             var operation = results[index].Operation;
-            progress?.Report(new SyncProgress(
-                ProgressPhase(operation.Kind),
-                index + 1,
-                results.Length,
-                operation.Description,
-                operation));
+            progress?.Report(new SyncProgress("Downloading", index + 1, results.Length, operation.Description, operation));
             results[index] = results[index] with { Status = SyncOperationStatus.Running };
             await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
-
             try
             {
-                results[index] = operation.Kind switch
-                {
-                    SyncOperationKind.DownloadMap => await DownloadAsync(results[index], executionPlan, preparedMaps, blockedMaps, cancellationToken).ConfigureAwait(false),
-                    SyncOperationKind.UploadMap => await UploadAsync(results[index], selectedDevice, executionId, preparedMaps, blockedMaps, diagnosticWarnings, cancellationToken).ConfigureAwait(false),
-                    SyncOperationKind.ImportPlaylist => await ImportPlaylistAsync(results[index], selectedDevice, preparedPlaylists, cancellationToken).ConfigureAwait(false),
-                    _ => results[index] with { Status = SyncOperationStatus.Skipped, Message = "This operation does not write to the Quest." }
-                };
+                results[index] = await DownloadAsync(results[index], executionPlan, preparedMaps, blockedMaps, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 results[index] = results[index] with { Status = SyncOperationStatus.Canceled, Message = "Operation was canceled." };
-                CancelFrom(index + 1);
+                CancelPending();
                 return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled.").ConfigureAwait(false);
             }
             catch (Exception exception)
@@ -148,13 +119,162 @@ public sealed class SyncExecutor
                 if (operation.MapIdentity is not null) blockedMaps.Add(operation.MapIdentity.Hash);
                 results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message };
             }
-            finally
-            {
-                foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
-            }
-
             await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
         }
+
+        // Resolve every upload's local source before the Quest write window. This includes
+        // uploads backed by an existing cache entry without a DownloadMap operation.
+        foreach (var index in Enumerable.Range(0, results.Length)
+                     .Where(index => results[index].Operation.Kind == SyncOperationKind.UploadMap))
+        {
+            var identity = results[index].Operation.MapIdentity
+                ?? throw new InvalidOperationException("UploadMap requires an exact map identity.");
+            if (blockedMaps.Contains(identity.Hash))
+            {
+                results[index] = results[index] with { Status = SyncOperationStatus.Skipped, Message = "The exact map source could not be prepared." };
+                continue;
+            }
+            if (preparedMaps.ContainsKey(identity.Hash)) continue;
+
+            try
+            {
+                var localPath = await _mapSources.GetCachedMapDirectoryAsync(identity, cancellationToken).ConfigureAwait(false);
+                if (localPath is null)
+                {
+                    blockedMaps.Add(identity.Hash);
+                    results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = "The exact map is not available in the local cache." };
+                }
+                else
+                {
+                    preparedMaps[identity.Hash] = localPath;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancelPending();
+                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled while preparing local map inputs.").ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                blockedMaps.Add(identity.Hash);
+                results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message };
+            }
+        }
+
+        var writeIndexes = Enumerable.Range(0, results.Length)
+            .Where(index => results[index].Status == SyncOperationStatus.Pending &&
+                            results[index].Operation.Kind is SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist)
+            .ToArray();
+        QuestWriteSession? writeSession = null;
+        var canceledDuringWrites = false;
+        if (writeIndexes.Length > 0)
+        {
+            progress?.Report(new SyncProgress("Preparing write session", 0, writeIndexes.Length, "Revalidating Quest state before writes."));
+            if (!selectedDevice.IsConnected || !string.Equals(selectedDevice.Serial, executionPlan.Target.DeviceSerial, StringComparison.Ordinal))
+                return await RefusePendingAsync("The selected Quest changed before the write phase. Rebuild the sync plan.").ConfigureAwait(false);
+
+            QuestBeatSaberScanResult writePhaseScan;
+            try
+            {
+                writePhaseScan = await _scanner.ScanAsync(selectedDevice, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancelPending();
+                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled before Quest writes began.").ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                return await RefusePendingAsync($"Could not revalidate Quest state before writing: {exception.Message}").ConfigureAwait(false);
+            }
+
+            if (!executionPlan.Target.Matches(selectedDevice.Serial, writePhaseScan))
+                return await RefusePendingAsync("Quest state changed during local preparation. Rebuild the sync plan before writing.").ConfigureAwait(false);
+
+            progress?.Report(new SyncProgress("Stopping Beat Saber", 0, writeIndexes.Length, "Acquiring the QBSync writer lock and stopping Beat Saber."));
+            try
+            {
+                var preparation = await _target.BeginWriteSessionAsync(selectedDevice, executionId, cancellationToken).ConfigureAwait(false);
+                foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
+                if (!preparation.IsReady || preparation.Session is null)
+                    return await RefusePendingAsync(preparation.Message ?? "Quest write preparation was refused.").ConfigureAwait(false);
+                writeSession = preparation.Session;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
+                CancelPending();
+                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled before Quest writes began.").ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
+                return await RefusePendingAsync($"Could not prepare Quest writes: {exception.Message}").ConfigureAwait(false);
+            }
+
+            try
+            {
+                foreach (var index in writeIndexes)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        CancelPending();
+                        canceledDuringWrites = true;
+                        break;
+                    }
+
+                    var operation = results[index].Operation;
+                    progress?.Report(new SyncProgress(ProgressPhase(operation.Kind), index + 1, results.Length, operation.Description, operation));
+                    results[index] = results[index] with { Status = SyncOperationStatus.Running };
+                    await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
+                    try
+                    {
+                        results[index] = operation.Kind switch
+                        {
+                            SyncOperationKind.UploadMap => await UploadAsync(results[index], selectedDevice, executionId, preparedMaps, blockedMaps, diagnosticWarnings, cancellationToken).ConfigureAwait(false),
+                            SyncOperationKind.ImportPlaylist => await ImportPlaylistAsync(results[index], selectedDevice, preparedPlaylists, cancellationToken).ConfigureAwait(false),
+                            _ => throw new InvalidOperationException("Only Quest write operations may enter the write phase.")
+                        };
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        results[index] = results[index] with { Status = SyncOperationStatus.Canceled, Message = "Operation was canceled." };
+                        CancelPending();
+                        canceledDuringWrites = true;
+                        break;
+                    }
+                    catch (Exception exception)
+                    {
+                        if (operation.MapIdentity is not null) blockedMaps.Add(operation.MapIdentity.Hash);
+                        results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message };
+                    }
+                    finally
+                    {
+                        foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
+                    }
+
+                    await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                try
+                {
+                    await _target.EndWriteSessionAsync(selectedDevice, writeSession, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    diagnosticWarnings.Add($"QBSync writer lock could not be released: {exception.Message}");
+                }
+                foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
+            }
+        }
+
+        foreach (var index in Enumerable.Range(0, results.Length).Where(index => results[index].Status == SyncOperationStatus.Pending))
+            results[index] = results[index] with { Status = SyncOperationStatus.Skipped, Message = "This operation does not write to the Quest." };
+
+        if (canceledDuringWrites)
+            return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled.").ConfigureAwait(false);
 
         return await FinishAsync(
             results.Any(result => result.Status == SyncOperationStatus.Failed)
@@ -169,10 +289,29 @@ public sealed class SyncExecutor
             return await FinishAsync(SyncRunStatus.Refused, message).ConfigureAwait(false);
         }
 
+        async Task<SyncResult> RefusePendingAsync(string message)
+        {
+            for (var index = 0; index < results.Length; index++)
+            {
+                if (results[index].Status == SyncOperationStatus.Pending)
+                    results[index] = results[index] with { Status = SyncOperationStatus.Skipped, Message = message };
+            }
+            return await FinishAsync(SyncRunStatus.Refused, message).ConfigureAwait(false);
+        }
+
         void CancelFrom(int start)
         {
             for (var index = start; index < results.Length; index++)
                 results[index] = results[index] with { Status = SyncOperationStatus.Canceled, Message = "Sync was canceled before this operation ran." };
+        }
+
+        void CancelPending()
+        {
+            for (var index = 0; index < results.Length; index++)
+            {
+                if (results[index].Status == SyncOperationStatus.Pending)
+                    results[index] = results[index] with { Status = SyncOperationStatus.Canceled, Message = "Sync was canceled before this operation ran." };
+            }
         }
 
         async Task TryWriteJournalAsync(SyncRunStatus status, string? message)
@@ -246,11 +385,7 @@ public sealed class SyncExecutor
             return result with { Status = SyncOperationStatus.Skipped, Message = "Final map directory already exists; it was preserved." };
 
         if (!preparedMaps.TryGetValue(identity.Hash, out var localPath))
-        {
-            localPath = await _mapSources.GetCachedMapDirectoryAsync(identity, cancellationToken).ConfigureAwait(false);
-            if (localPath is null)
-                return result with { Status = SyncOperationStatus.Failed, Message = "The exact map is not available in the local cache." };
-        }
+            return result with { Status = SyncOperationStatus.Failed, Message = "The exact map source was not prepared before the Quest write session." };
 
         var stagingPath = QuestExecutionPaths.MapStaging(_paths, identity, executionId);
         var stagingCreated = false;

@@ -6,6 +6,9 @@ namespace QuestBeatSync.Infrastructure.Execution;
 
 public static class QuestExecutionPaths
 {
+    public static string WriterLock(QuestBeatSaberPaths paths) =>
+        Join(paths.BeatSaberModData, ".qbsync-write-lock");
+
     public static string MapFinal(QuestBeatSaberPaths paths, BeatMapIdentity identity) =>
         Join(paths.CustomLevels, identity.Hash);
 
@@ -26,12 +29,41 @@ public static class QuestExecutionPaths
     }
 
     public static bool IsOwnedMapStagingPath(QuestBeatSaberPaths paths, string remotePath) =>
-        TryGetDirectChild(paths.CustomLevels, remotePath, out var name) &&
-        name.Length == 81 &&
-        name.StartsWith(".qbsync-", StringComparison.Ordinal) &&
-        BeatSaverHash.IsValid(name.Substring(8, 40)) &&
-        name[48] == '-' &&
-        name[49..].All(Uri.IsHexDigit);
+        TryParseOwnedMapStagingPath(paths, remotePath, out _, out _);
+
+    public static bool TryParseOwnedMapStagingPath(
+        QuestBeatSaberPaths paths,
+        string remotePath,
+        out BeatMapIdentity? identity,
+        out Guid executionId)
+    {
+        identity = null;
+        executionId = default;
+        if (!TryGetDirectChild(paths.CustomLevels, remotePath, out var name) ||
+            name.Length != 81 ||
+            !name.StartsWith(".qbsync-", StringComparison.Ordinal) ||
+            !BeatSaverHash.IsValid(name.Substring(8, 40)) ||
+            name[48] != '-' ||
+            !Guid.TryParseExact(name[49..], "N", out executionId))
+        {
+            return false;
+        }
+
+        identity = new BeatMapIdentity(name.Substring(8, 40));
+        return true;
+    }
+
+    public static bool TryParseMapFinalPath(
+        QuestBeatSaberPaths paths,
+        string remotePath,
+        out BeatMapIdentity? identity)
+    {
+        identity = null;
+        if (!TryGetDirectChild(paths.CustomLevels, remotePath, out var name) || !BeatSaverHash.IsValid(name))
+            return false;
+        identity = new BeatMapIdentity(name);
+        return true;
+    }
 
     public static bool IsOwnedPlaylistStagingPath(QuestBeatSaberPaths paths, string remotePath) =>
         TryGetDirectChild(paths.Playlists, remotePath, out var name) &&

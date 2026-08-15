@@ -144,3 +144,15 @@ tests/
 不存在 `DeleteMap`。Sync 页面会始终显示 `Deletion: 0`，并明确提示：
 
 > QBSync never deletes existing maps during normal sync.
+
+## Phase 6B.1 write-session safety
+
+> **NOT YET MANUALLY VERIFIED ON REAL QUEST**
+
+QBSync currently uses a cooperative single-writer lock under Beat Saber's ModData directory. Network downloads and immutable playlist snapshot preparation finish before this lock is acquired. The Quest is scanned again, the lock is acquired with one atomic `mkdir`, and Beat Saber is force-stopped immediately before the write phase.
+
+QBSync instances that respect this lock do not write concurrently, and normal sync never intentionally overwrites an existing final map destination. Toybox `mv -n` is not described as a universal atomic no-replace primitive. External ADB clients and file-management tools are outside the cooperative guarantee, so users must not modify Beat Saber ModData with another tool while synchronization is running.
+
+An existing `.qbsync-write-lock` causes sync to refuse writes. QBSync does not automatically remove a possibly stale lock. Lock and current-execution staging cleanup are best-effort diagnostics and cannot change an already completed operation result.
+
+Managed playlist destinations are still preserved rather than replaced. Exact remote-content idempotency is not implemented yet, so an existing managed playlist file is conservatively refused even when it may contain the same bytes.

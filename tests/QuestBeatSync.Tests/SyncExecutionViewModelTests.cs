@@ -153,7 +153,8 @@ public sealed class SyncExecutionViewModelTests
         public int PlaylistCount { get; private set; }
         public int MutationCount => StagingCount + PromoteCount + PlaylistCount;
         public IReadOnlyList<string> DrainDiagnosticWarnings() => [];
-        public Task<QuestWritePreparationResult> PrepareForWritesAsync(QuestDevice device, CancellationToken cancellationToken = default) { PrepareCount++; return Task.FromResult(QuestWritePreparationResult.Ready); }
+        public Task<QuestWritePreparationResult> BeginWriteSessionAsync(QuestDevice device, Guid executionId, CancellationToken cancellationToken = default) { PrepareCount++; return Task.FromResult(QuestWritePreparationResult.Ready(new QuestWriteSession(executionId, device.Serial, QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)))); }
+        public Task EndWriteSessionAsync(QuestDevice device, QuestWriteSession session, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default) => Task.FromResult(_directories.Contains(remotePath));
         public Task CreateStagingDirectoryAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default) { StagingCount++; _directories.Add(stagingPath); return Task.CompletedTask; }
         public Task UploadMapDirectoryAsync(QuestDevice device, string localMapDirectory, string stagingPath, IReadOnlySet<string> excludedFileNames, CancellationToken cancellationToken = default) => Task.CompletedTask;

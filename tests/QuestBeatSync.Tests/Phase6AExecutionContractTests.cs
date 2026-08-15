@@ -212,6 +212,66 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
+    public async Task DownloadsAreGroupedBeforeSingleWriteSession()
+    {
+        var plan = Plan(
+            Operation(SyncOperationKind.DownloadMap, HashA),
+            Operation(SyncOperationKind.UploadMap, HashA),
+            Operation(SyncOperationKind.DownloadMap, HashB),
+            Operation(SyncOperationKind.UploadMap, HashB));
+        var lookups = new Dictionary<string, BeatSaverLookupResult>(StringComparer.OrdinalIgnoreCase)
+        {
+            [HashA] = ExactLookup(HashA),
+            [HashB] = ExactLookup(HashB)
+        };
+        var fixture = CreateFixture(EmptyScan(), plan, lookups: lookups);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        CollectionAssert.AreEqual(
+            new[] { $"download:{HashA}", $"download:{HashB}", "begin", $"upload:{HashA}", $"upload:{HashB}", "end" },
+            fixture.Events.ToArray());
+        Assert.AreEqual(1, fixture.Target.BeginCount);
+        Assert.AreEqual(1, fixture.Target.EndCount);
+    }
+
+    [TestMethod]
+    public async Task QuestChangeAfterDownloadsRefusesWriteAndKeepsPreparedCache()
+    {
+        var plan = Plan(
+            Operation(SyncOperationKind.DownloadMap, HashA),
+            Operation(SyncOperationKind.UploadMap, HashA));
+        var fixture = CreateFixture(
+            EmptyScan(),
+            plan,
+            writePhaseScan: ScanWithMap(HashB),
+            lookups: new Dictionary<string, BeatSaverLookupResult> { [HashA] = ExactLookup(HashA) });
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Refused, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.AreEqual(SyncOperationStatus.Skipped, result.Operations[1].Status);
+        Assert.AreEqual(1, fixture.MapSources.DownloadCount);
+        Assert.AreEqual(0, fixture.Target.BeginCount);
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+    }
+
+    [TestMethod]
+    public async Task WriterLockCleanupFailureIsWarningAndDoesNotRewriteSuccess()
+    {
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)));
+        fixture.Target.EndWarning = "writer lock cleanup failed";
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.IsTrue(result.DiagnosticWarnings.Any(warning => warning.Contains("writer lock", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
     public async Task CanceledStagingUpload_NeverPromotesFinalDirectory()
     {
         using var cancellation = new CancellationTokenSource();
@@ -308,6 +368,7 @@ public sealed class Phase6AExecutionContractTests
         Assert.AreEqual(SyncOperationStatus.Canceled, result.Operations[1].Status);
         Assert.IsTrue(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashA}"));
         Assert.IsFalse(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashB}"));
+        Assert.AreEqual(1, fixture.Target.EndCount);
     }
 
     [TestMethod]
@@ -430,11 +491,14 @@ public sealed class Phase6AExecutionContractTests
         QuestBeatSaberScanResult? currentScan = null,
         IPlaylistExecutionWorkspace? workspace = null,
         ISyncExecutionJournal? journal = null,
+        QuestBeatSaberScanResult? writePhaseScan = null,
         IReadOnlyDictionary<string, BeatSaverLookupResult>? lookups = null)
     {
-        var scanner = new StubScanner(currentScan ?? boundScan);
-        var target = new RecordingTarget();
-        var mapSources = new RecordingMapSources();
+        var events = new List<string>();
+        var firstScan = currentScan ?? boundScan;
+        var scanner = new StubScanner(firstScan, writePhaseScan ?? firstScan);
+        var target = new RecordingTarget(events);
+        var mapSources = new RecordingMapSources(events);
         var recordingJournal = journal as MemoryJournal ?? new MemoryJournal();
         var sources = plan.Operations
             .Where(operation => operation.PlaylistSource is not null)
@@ -448,7 +512,7 @@ public sealed class Phase6AExecutionContractTests
             target,
             journal ?? recordingJournal,
             QuestBeatSaberPaths.Default);
-        return new ExecutionFixture(executor, executionPlan, scanner, target, mapSources, recordingJournal);
+        return new ExecutionFixture(executor, executionPlan, scanner, target, mapSources, recordingJournal, events);
     }
 
     private static SyncPlan Plan(params SyncOperation[] operations)
@@ -460,6 +524,9 @@ public sealed class Phase6AExecutionContractTests
 
     private static SyncOperation Operation(SyncOperationKind kind, string hash) =>
         new(kind, kind.ToString(), new BeatMapIdentity(hash));
+
+    private static BeatSaverLookupResult ExactLookup(string hash) =>
+        new(BeatSaverAvailability.Online, hash, null, hash, null, new Uri("https://example.test/map.zip"), true);
 
     private static Playlist PlaylistWithSource(string title, string path, string sha)
     {
@@ -499,30 +566,33 @@ public sealed class Phase6AExecutionContractTests
         StubScanner Scanner,
         RecordingTarget Target,
         RecordingMapSources MapSources,
-        MemoryJournal Journal);
+        MemoryJournal Journal,
+        List<string> Events);
 
-    private sealed class StubScanner(QuestBeatSaberScanResult result) : IQuestBeatSaberScanner
+    private sealed class StubScanner(params QuestBeatSaberScanResult[] results) : IQuestBeatSaberScanner
     {
         public int CallCount { get; private set; }
         public Task<QuestBeatSaberScanResult> ScanAsync(QuestDevice device, CancellationToken cancellationToken = default)
         {
+            var result = results[Math.Min(CallCount, results.Length - 1)];
             CallCount++;
             return Task.FromResult(result);
         }
     }
 
-    private sealed class RecordingMapSources : ISyncMapSourceProvider
+    private sealed class RecordingMapSources(List<string> events) : ISyncMapSourceProvider
     {
         public int DownloadCount { get; private set; }
         public Task<string?> GetCachedMapDirectoryAsync(BeatMapIdentity identity, CancellationToken cancellationToken = default) => Task.FromResult<string?>($"C:/cache/{identity.Hash}");
         public Task<string> DownloadExactMapAsync(BeatMapIdentity identity, BeatSaverLookupResult exactLookup, CancellationToken cancellationToken = default)
         {
             DownloadCount++;
+            events.Add($"download:{identity.Hash}");
             return Task.FromResult($"C:/cache/{identity.Hash}");
         }
     }
 
-    private sealed class RecordingTarget : IQuestSyncTarget
+    private sealed class RecordingTarget(List<string> events) : IQuestSyncTarget
     {
         public HashSet<string> Directories { get; } = new(StringComparer.Ordinal);
         public int CreateStagingCount { get; private set; }
@@ -535,16 +605,38 @@ public sealed class Phase6AExecutionContractTests
         public bool FailPlaylistImport { get; set; }
         public IReadOnlySet<string> LastExcludedFiles { get; private set; } = new HashSet<string>();
         public List<string> ImportedPlaylistContents { get; } = [];
-        public QuestWritePreparationResult WritePreparation { get; set; } = QuestWritePreparationResult.Ready;
+        public QuestWritePreparationResult? WritePreparation { get; set; }
         public bool FinalAppearsOnSecondCheck { get; set; }
         public bool StructureVerified { get; set; } = true;
         public bool FailPromotion { get; set; }
+        public int BeginCount { get; private set; }
+        public int EndCount { get; private set; }
+        public string? EndWarning { get; set; }
+        private readonly Queue<string> _warnings = new();
         private int _finalDirectoryChecks;
 
-        public IReadOnlyList<string> DrainDiagnosticWarnings() => [];
+        public IReadOnlyList<string> DrainDiagnosticWarnings()
+        {
+            var warnings = _warnings.ToArray();
+            _warnings.Clear();
+            return warnings;
+        }
 
-        public Task<QuestWritePreparationResult> PrepareForWritesAsync(QuestDevice device, CancellationToken cancellationToken = default) =>
-            Task.FromResult(WritePreparation);
+        public Task<QuestWritePreparationResult> BeginWriteSessionAsync(QuestDevice device, Guid executionId, CancellationToken cancellationToken = default)
+        {
+            BeginCount++;
+            events.Add("begin");
+            return Task.FromResult(WritePreparation ?? QuestWritePreparationResult.Ready(
+                new QuestWriteSession(executionId, device.Serial, QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default))));
+        }
+
+        public Task EndWriteSessionAsync(QuestDevice device, QuestWriteSession session, CancellationToken cancellationToken = default)
+        {
+            EndCount++;
+            events.Add("end");
+            if (EndWarning is not null) _warnings.Enqueue(EndWarning);
+            return Task.CompletedTask;
+        }
 
         public Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default)
         {
@@ -555,6 +647,8 @@ public sealed class Phase6AExecutionContractTests
         public Task CreateStagingDirectoryAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default) { CreateStagingCount++; Directories.Add(stagingPath); return Task.CompletedTask; }
         public Task UploadMapDirectoryAsync(QuestDevice device, string localMapDirectory, string stagingPath, IReadOnlySet<string> excludedFileNames, CancellationToken cancellationToken = default)
         {
+            var stagingIdentity = QuestExecutionPaths.TryParseOwnedMapStagingPath(QuestBeatSaberPaths.Default, stagingPath, out var identity, out _) ? identity : null;
+            events.Add($"upload:{stagingIdentity?.Hash}");
             LastExcludedFiles = excludedFileNames;
             if (FailUploadContaining is not null && stagingPath.Contains(FailUploadContaining, StringComparison.Ordinal)) throw new IOException("Fixture upload failure.");
             if (CancelUploadUsing is not null && (CancelUploadContaining is null || stagingPath.Contains(CancelUploadContaining, StringComparison.Ordinal))) { CancelUploadUsing.Cancel(); throw new OperationCanceledException(cancellationToken); }

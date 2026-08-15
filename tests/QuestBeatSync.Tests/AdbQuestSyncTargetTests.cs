@@ -194,15 +194,127 @@ public sealed class AdbQuestSyncTargetTests
     public async Task WritePreparation_RequiresNoClobberSupportAndSuccessfulForceStop()
     {
         var readyTransport = new StatefulTransport();
-        Assert.IsTrue((await CreateTarget(readyTransport).PrepareForWritesAsync(Device)).IsReady);
+        var readyResult = await CreateTarget(readyTransport).BeginWriteSessionAsync(Device, Guid.NewGuid());
+        Assert.IsTrue(readyResult.IsReady);
         CollectionAssert.Contains(readyTransport.DirectCommands.ToArray(), "am force-stop com.beatgames.beatsaber");
 
         var unsupported = new StatefulTransport { MoveHelp = "usage: mv [-fin] SOURCE DEST" };
-        Assert.IsFalse((await CreateTarget(unsupported).PrepareForWritesAsync(Device)).IsReady);
+        Assert.IsFalse((await CreateTarget(unsupported).BeginWriteSessionAsync(Device, Guid.NewGuid())).IsReady);
         Assert.IsFalse(unsupported.DirectCommands.Any(command => command.StartsWith("am force-stop", StringComparison.Ordinal)));
 
         var stopFailure = new StatefulTransport { ForceStopSucceeds = false };
-        Assert.IsFalse((await CreateTarget(stopFailure).PrepareForWritesAsync(Device)).IsReady);
+        Assert.IsFalse((await CreateTarget(stopFailure).BeginWriteSessionAsync(Device, Guid.NewGuid())).IsReady);
+        Assert.IsFalse(stopFailure.Directories.Contains(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)));
+    }
+
+    [TestMethod]
+    public async Task WriterLock_IsAtomicallyAcquiredAndReleasedByCurrentSession()
+    {
+        var transport = new StatefulTransport();
+        var target = CreateTarget(transport);
+
+        var result = await target.BeginWriteSessionAsync(Device, Guid.NewGuid());
+
+        Assert.IsTrue(result.IsReady);
+        Assert.IsNotNull(result.Session);
+        Assert.IsTrue(transport.Directories.Contains(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)));
+        await target.EndWriteSessionAsync(Device, result.Session);
+        Assert.IsFalse(transport.Directories.Contains(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)));
+    }
+
+    [TestMethod]
+    public async Task ExistingWriterLock_RefusesBeforeForceStopOrContentWrite()
+    {
+        var transport = new StatefulTransport();
+        transport.Directories.Add(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default));
+
+        var result = await CreateTarget(transport).BeginWriteSessionAsync(Device, Guid.NewGuid());
+
+        Assert.IsFalse(result.IsReady);
+        StringAssert.Contains(result.Message, "Another QBSync write session");
+        Assert.IsFalse(transport.DirectCommands.Any(command => command.StartsWith("am force-stop", StringComparison.Ordinal)));
+        Assert.AreEqual(0, transport.Pushes.Count);
+    }
+
+    [TestMethod]
+    public async Task WriterLockMetadataAndReleaseFailures_AreDiagnosticOnly()
+    {
+        var transport = new StatefulTransport { FailMetadata = true, FailRemove = true };
+        var target = CreateTarget(transport);
+        var result = await target.BeginWriteSessionAsync(Device, Guid.NewGuid());
+
+        Assert.IsTrue(result.IsReady);
+        await target.EndWriteSessionAsync(Device, result.Session!);
+
+        var warnings = target.DrainDiagnosticWarnings();
+        Assert.IsTrue(warnings.Any(warning => warning.Contains("metadata", StringComparison.OrdinalIgnoreCase)));
+        Assert.IsTrue(warnings.Any(warning => warning.Contains("writer lock", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
+    public async Task StagingAndFinalIdentityMismatch_AreRejectedBeforePromotion()
+    {
+        var target = CreateTarget(new StatefulTransport());
+        var identityA = new BeatMapIdentity(Hash);
+        var identityB = new BeatMapIdentity("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+        var stagingA = QuestExecutionPaths.MapStaging(QuestBeatSaberPaths.Default, identityA, Guid.NewGuid());
+        var finalB = QuestExecutionPaths.MapFinal(QuestBeatSaberPaths.Default, identityB);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            target.VerifyStagedMapStructureAsync(Device, stagingA, identityB));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            target.TryPromoteStagingAsync(Device, stagingA, finalB));
+    }
+
+    [TestMethod]
+    public async Task AmbiguousRemoteProbe_FailsClosed()
+    {
+        var target = CreateTarget(new StatefulTransport { UnexpectedProbeOutput = true });
+
+        await Assert.ThrowsAsync<QuestSyncTargetException>(() =>
+            target.DirectoryExistsAsync(Device, QuestBeatSaberPaths.Default.CustomLevels));
+    }
+
+    [TestMethod]
+    public async Task PlaylistPushFailure_IsNotMaskedByCleanupProbeFailure()
+    {
+        var snapshot = Path.Combine(_temporaryRoot, "push-failure.bplist");
+        await File.WriteAllTextAsync(snapshot, "approved bytes");
+        var source = new PreparedPlaylistSource(Path.Combine(_temporaryRoot, "source.bplist"), snapshot, new string('A', 64));
+        var transport = new StatefulTransport
+        {
+            FailPush = true,
+            LeavePartialOnFailedPush = true,
+            RemoveLeavesArtifact = true,
+            FailProbeAfterRemove = true
+        };
+        var target = CreateTarget(transport);
+
+        var exception = await Assert.ThrowsAsync<QuestSyncTargetException>(() => target.ImportPlaylistAsync(Device, source));
+
+        StringAssert.Contains(exception.Message, "push failed");
+        Assert.IsTrue(target.DrainDiagnosticWarnings().Any(warning => warning.Contains("probe failed", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
+    public async Task PlaylistCancellation_IsNotMaskedByCleanupFailure()
+    {
+        var snapshot = Path.Combine(_temporaryRoot, "cancel.bplist");
+        await File.WriteAllTextAsync(snapshot, "approved bytes");
+        var source = new PreparedPlaylistSource(Path.Combine(_temporaryRoot, "source.bplist"), snapshot, new string('A', 64));
+        var transport = new StatefulTransport
+        {
+            CancelPush = true,
+            LeavePartialOnCanceledPush = true,
+            RemoveLeavesArtifact = true,
+            FailProbeAfterRemove = true
+        };
+        var target = CreateTarget(transport);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            target.ImportPlaylistAsync(Device, source, new CancellationToken(true)));
+
+        Assert.IsTrue(target.DrainDiagnosticWarnings().Any(warning => warning.Contains("probe failed", StringComparison.OrdinalIgnoreCase)));
     }
 
     private string CreateMapCache()
@@ -232,7 +344,13 @@ public sealed class AdbQuestSyncTargetTests
         public bool LeavePartialOnFailedPush { get; set; }
         public bool FailMove { get; set; }
         public bool FailRemove { get; set; }
+        public bool RemoveLeavesArtifact { get; set; }
+        public bool FailProbeAfterRemove { get; set; }
+        public bool UnexpectedProbeOutput { get; set; }
+        public bool FailMetadata { get; set; }
+        public bool LeavePartialOnCanceledPush { get; set; }
         public Action? BeforeMove { get; set; }
+        private bool _removeAttempted;
 
         public Task<QuestDeviceDiscoveryResult> GetDevicesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
@@ -247,9 +365,16 @@ public sealed class AdbQuestSyncTargetTests
 
             var script = arguments[2];
             var paths = QuotedPath.Matches(script).Select(match => match.Groups[1].Value).ToArray();
-            if (script.StartsWith("test -d", StringComparison.Ordinal)) return Exit(Directories.Contains(paths[0]));
-            if (script.StartsWith("test -e", StringComparison.Ordinal)) return Exit(RemoteFiles.ContainsKey(paths[0]) || Directories.Contains(paths[0]));
-            if (script.StartsWith("test -s", StringComparison.Ordinal)) return Exit(RemoteFiles.TryGetValue(paths[0], out var bytes) && bytes.Length > 0);
+            if (script.StartsWith("if mkdir", StringComparison.Ordinal))
+                return Success(Directories.Add(paths[0]) ? "__QBSYNC_ACQUIRED__" : "__QBSYNC_LOCKED__");
+            if (script.StartsWith("if test -", StringComparison.Ordinal) && FailProbeAfterRemove && _removeAttempted)
+                return Task.FromResult(Failed("probe failed"));
+            if (script.StartsWith("if test -", StringComparison.Ordinal) && UnexpectedProbeOutput)
+                return Success("unexpected");
+            if (script.StartsWith("if test -d", StringComparison.Ordinal)) return Probe(Directories.Contains(paths[0]));
+            if (script.StartsWith("if test -e", StringComparison.Ordinal)) return Probe(RemoteFiles.ContainsKey(paths[0]) || Directories.Contains(paths[0]));
+            if (script.StartsWith("if test -s", StringComparison.Ordinal)) return Probe(RemoteFiles.TryGetValue(paths[0], out var bytes) && bytes.Length > 0);
+            if (script.StartsWith("printf '%s'", StringComparison.Ordinal)) return FailMetadata ? Task.FromResult(Failed("metadata failed")) : Success();
             if (script.StartsWith("mkdir", StringComparison.Ordinal)) { Directories.Add(paths[0]); return Success(); }
             if (script.StartsWith("find", StringComparison.Ordinal))
             {
@@ -263,15 +388,19 @@ public sealed class AdbQuestSyncTargetTests
                 Move(paths[0], paths[1]);
                 return Success();
             }
-            if (script.StartsWith("rm -r", StringComparison.Ordinal)) { if (FailRemove) return Task.FromResult(Failed("remove failed")); RemoveTree(paths[0]); return Success(); }
-            if (script.StartsWith("rm -f", StringComparison.Ordinal)) { if (FailRemove) return Task.FromResult(Failed("remove failed")); RemoteFiles.Remove(paths[0]); return Success(); }
+            if (script.StartsWith("rm -r", StringComparison.Ordinal)) { _removeAttempted = true; if (FailRemove) return Task.FromResult(Failed("remove failed")); if (!RemoveLeavesArtifact) RemoveTree(paths[0]); return Success(); }
+            if (script.StartsWith("rm -f", StringComparison.Ordinal)) { _removeAttempted = true; if (FailRemove) return Task.FromResult(Failed("remove failed")); if (!RemoveLeavesArtifact) RemoteFiles.Remove(paths[0]); return Success(); }
             return Task.FromResult(Failed($"Unexpected script: {script}"));
         }
 
         public async Task<AdbCommandResult> PushAsync(QuestDevice device, string localPath, string remotePath, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (CancelPush) throw new OperationCanceledException(cancellationToken);
+            if (CancelPush)
+            {
+                if (LeavePartialOnCanceledPush) RemoteFiles[remotePath] = [1];
+                throw new OperationCanceledException(cancellationToken);
+            }
             Pushes.Add((localPath, remotePath));
             if (FailPush)
             {
@@ -306,6 +435,7 @@ public sealed class AdbQuestSyncTargetTests
         }
 
         private static Task<AdbCommandResult> Success(string output = "") => Task.FromResult(Ok(output));
+        private static Task<AdbCommandResult> Probe(bool exists) => Success(exists ? "__QBSYNC_EXISTS__" : "__QBSYNC_MISSING__");
         private static Task<AdbCommandResult> Exit(bool success) => Task.FromResult(new AdbCommandResult(true, false, success ? 0 : 1, "", ""));
         private static AdbCommandResult Ok(string output = "") => new(true, false, 0, output, "");
         private static AdbCommandResult Failed(string error) => new(true, false, 1, "", error);

@@ -28,8 +28,14 @@ public interface IQuestSyncTarget
 {
     IReadOnlyList<string> DrainDiagnosticWarnings();
 
-    Task<QuestWritePreparationResult> PrepareForWritesAsync(
+    Task<QuestWritePreparationResult> BeginWriteSessionAsync(
         QuestDevice device,
+        Guid executionId,
+        CancellationToken cancellationToken = default);
+
+    Task EndWriteSessionAsync(
+        QuestDevice device,
+        QuestWriteSession session,
         CancellationToken cancellationToken = default);
 
     Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default);
