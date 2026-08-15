@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
+using QuestBeatSync.Infrastructure.Importing;
 
 namespace QuestBeatSync.App.ViewModels;
 
@@ -9,11 +10,14 @@ public sealed class MainWindowViewModel : ViewModelBase
 {
     private readonly IQuestTransport _questTransport;
     private readonly IQuestBeatSaberScanner _beatSaberScanner;
+    private readonly ILocalPlaylistImporter _playlistImporter;
     private readonly AdbQuestTransportOptions _adbOptions;
     private readonly AdbSettingsStore _settingsStore;
+    private LocalPlaylistLibraryState _localPlaylistState = new([]);
     private CancellationTokenSource? _scanCancellationSource;
     private NavigationItemViewModel? _selectedPage;
     private QuestDevice? _selectedDevice;
+    private Playlist? _selectedImportedPlaylist;
     private QuestDeviceDiscoveryStatus _discoveryStatus = QuestDeviceDiscoveryStatus.Success;
     private string? _errorMessage;
     private string? _environmentError;
@@ -25,15 +29,18 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _songCoreDetected;
     private bool _playlistManagerDetected;
     private bool _environmentScanCompleted;
+    private bool _isImportingPlaylists;
 
     public MainWindowViewModel(
         IQuestTransport questTransport,
         IQuestBeatSaberScanner beatSaberScanner,
+        ILocalPlaylistImporter playlistImporter,
         AdbQuestTransportOptions adbOptions,
         AdbSettingsStore settingsStore)
     {
         _questTransport = questTransport ?? throw new ArgumentNullException(nameof(questTransport));
         _beatSaberScanner = beatSaberScanner ?? throw new ArgumentNullException(nameof(beatSaberScanner));
+        _playlistImporter = playlistImporter ?? throw new ArgumentNullException(nameof(playlistImporter));
         _adbOptions = adbOptions ?? throw new ArgumentNullException(nameof(adbOptions));
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _configuredAdbPath = adbOptions.ConfiguredExecutablePath;
@@ -49,6 +56,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         Devices = [];
         InstalledMaps = [];
         InstalledPlaylists = [];
+        ImportedPlaylists = [];
+        PlaylistImportErrors = [];
         ScanWarnings = [];
         _selectedPage = NavigationItems[0];
 
@@ -66,6 +75,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public ObservableCollection<QuestInstalledMap> InstalledMaps { get; }
 
     public ObservableCollection<QuestInstalledPlaylist> InstalledPlaylists { get; }
+
+    public ObservableCollection<Playlist> ImportedPlaylists { get; }
+
+    public ObservableCollection<string> PlaylistImportErrors { get; }
 
     public ObservableCollection<QuestScanWarning> ScanWarnings { get; }
 
@@ -100,6 +113,26 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         get => _selectedDevice;
         set => SetSelectedDevice(value, startScan: true);
+    }
+
+    public Playlist? SelectedImportedPlaylist
+    {
+        get => _selectedImportedPlaylist;
+        set
+        {
+            if (ReferenceEquals(_selectedImportedPlaylist, value))
+            {
+                return;
+            }
+
+            _selectedImportedPlaylist = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasSelectedImportedPlaylist));
+            OnPropertyChanged(nameof(SelectedPlaylistAuthorDisplay));
+            OnPropertyChanged(nameof(SelectedPlaylistEntryCount));
+            OnPropertyChanged(nameof(SelectedPlaylistUniqueHashCount));
+            OnPropertyChanged(nameof(SelectedPlaylistDuplicateReferenceCount));
+        }
     }
 
     public string? ConfiguredAdbPath
@@ -162,6 +195,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool IsImportingPlaylists
+    {
+        get => _isImportingPlaylists;
+        private set
+        {
+            if (_isImportingPlaylists == value)
+            {
+                return;
+            }
+
+            _isImportingPlaylists = value;
+            OnPropertyChanged();
+        }
+    }
+
     public bool HasDevices => Devices.Count > 0;
 
     public bool HasMultipleDevices => Devices.Count > 1;
@@ -179,6 +227,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool HasInstalledPlaylists => InstalledPlaylists.Count > 0;
 
     public bool HasScanWarnings => ScanWarnings.Count > 0;
+
+    public bool HasImportedPlaylists => ImportedPlaylists.Count > 0;
+
+    public bool HasSelectedImportedPlaylist => SelectedImportedPlaylist is not null;
+
+    public bool HasPlaylistImportErrors => PlaylistImportErrors.Count > 0;
+
+    public string PlaylistImportErrorText => string.Join(Environment.NewLine, PlaylistImportErrors);
 
     public bool EnvironmentScanCompleted => _environmentScanCompleted;
 
@@ -335,6 +391,70 @@ public sealed class MainWindowViewModel : ViewModelBase
     public int PlaylistCount => InstalledPlaylists.Count;
 
     public int ScanWarningCount => ScanWarnings.Count;
+
+    public int TotalPlaylistReferences => _localPlaylistState.TotalPlaylistReferences;
+
+    public int UniqueRequiredHashes => _localPlaylistState.UniqueRequiredHashes;
+
+    public int DuplicateReferences => _localPlaylistState.DuplicateReferences;
+
+    public string SelectedPlaylistAuthorDisplay => string.IsNullOrWhiteSpace(SelectedImportedPlaylist?.Author)
+        ? "by Unknown author"
+        : $"by {SelectedImportedPlaylist.Author}";
+
+    public int SelectedPlaylistEntryCount => SelectedImportedPlaylist?.EntryCount ?? 0;
+
+    public int SelectedPlaylistUniqueHashCount => SelectedImportedPlaylist?.UniqueHashCount ?? 0;
+
+    public int SelectedPlaylistDuplicateReferenceCount =>
+        SelectedImportedPlaylist?.DuplicateReferenceCount ?? 0;
+
+    public async Task ImportPlaylistFilesAsync(IEnumerable<string> filePaths)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        IsImportingPlaylists = true;
+        PlaylistImportErrors.Clear();
+        OnPropertyChanged(nameof(HasPlaylistImportErrors));
+        OnPropertyChanged(nameof(PlaylistImportErrorText));
+
+        try
+        {
+            var results = await _playlistImporter.ImportAsync(filePaths);
+            Playlist? firstImported = null;
+
+            foreach (var result in results)
+            {
+                if (result.IsSuccess)
+                {
+                    firstImported ??= result.Playlist;
+                    ImportedPlaylists.Add(result.Playlist!);
+                }
+                else
+                {
+                    var filename = string.IsNullOrWhiteSpace(result.FilePath)
+                        ? "Playlist"
+                        : Path.GetFileName(result.FilePath);
+                    PlaylistImportErrors.Add($"{filename}: {result.ErrorMessage}");
+                }
+            }
+
+            if (firstImported is not null)
+            {
+                SelectedImportedPlaylist = firstImported;
+            }
+
+            NotifyLocalPlaylistStateChanged();
+        }
+        catch (Exception exception)
+        {
+            PlaylistImportErrors.Add($"Playlist import failed: {exception.Message}");
+            NotifyLocalPlaylistStateChanged();
+        }
+        finally
+        {
+            IsImportingPlaylists = false;
+        }
+    }
 
     private async Task RefreshDevicesAsync()
     {
@@ -512,5 +632,16 @@ public sealed class MainWindowViewModel : ViewModelBase
         {
             collection.Add(item);
         }
+    }
+
+    private void NotifyLocalPlaylistStateChanged()
+    {
+        _localPlaylistState = new LocalPlaylistLibraryState(ImportedPlaylists);
+        OnPropertyChanged(nameof(HasImportedPlaylists));
+        OnPropertyChanged(nameof(HasPlaylistImportErrors));
+        OnPropertyChanged(nameof(PlaylistImportErrorText));
+        OnPropertyChanged(nameof(TotalPlaylistReferences));
+        OnPropertyChanged(nameof(UniqueRequiredHashes));
+        OnPropertyChanged(nameof(DuplicateReferences));
     }
 }

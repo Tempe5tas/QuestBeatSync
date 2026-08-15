@@ -1,0 +1,35 @@
+{
+  "playlistTitle": "ACG",
+  "playlistAuthor": "Dana_Iclucia",
+  "playlistDescription": "中文说明と日本語の説明",
+  "image": "data:image/png;base64,QUJDRA==",
+  "customData": {
+    "syncURL": "https://example.test/acg.bplist"
+  },
+  "songs": [
+    {
+      "key": "1a2b",
+      "hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "songName": "中文歌曲"
+    },
+    {
+      "key": "2b3c",
+      "hash": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "songName": "日本語の曲"
+    },
+    {
+      "key": "duplicate",
+      "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "songName": "Duplicate reference"
+    },
+    {
+      "hash": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      "songName": "Missing key is allowed"
+    },
+    {
+      "key": "missing-hash",
+      "songName": "Missing hash is retained"
+    }
+  ]
+}
+

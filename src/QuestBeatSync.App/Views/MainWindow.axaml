@@ -9,7 +9,10 @@
     Width="1000"
     Height="680"
     MinWidth="760"
-    MinHeight="500">
+    MinHeight="500"
+    DragDrop.AllowDrop="True"
+    DragDrop.DragOver="OnDragOver"
+    DragDrop.Drop="OnDrop">
   <Grid ColumnDefinitions="220,*">
     <Border Background="#171A21" Padding="20,24">
       <Grid RowDefinitions="Auto,24,*">
@@ -173,6 +176,95 @@
         </StackPanel>
 
         <StackPanel IsVisible="{Binding IsPlaylists}" Spacing="14">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <TextBlock FontSize="20" FontWeight="SemiBold" Text="Local playlist imports" />
+              <TextBlock Foreground="#AAB1C0" Text="Preview only — nothing is uploaded to Quest." />
+            </StackPanel>
+            <Button
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Click="ImportPlaylist_Click"
+                Content="Import Playlist" />
+          </Grid>
+
+          <Border Padding="18" CornerRadius="8" BorderBrush="#596273" BorderThickness="1">
+            <StackPanel HorizontalAlignment="Center" Spacing="6">
+              <TextBlock FontWeight="SemiBold" Text="Drop one or more .bplist files here" />
+              <TextBlock Foreground="#8C94A5" Text="BeatSaver playlists are read as UTF-8" />
+              <ProgressBar Width="260" IsIndeterminate="True" IsVisible="{Binding IsImportingPlaylists}" />
+            </StackPanel>
+          </Border>
+
+          <TextBlock
+              IsVisible="{Binding HasPlaylistImportErrors}"
+              Foreground="#E88A8A"
+              Text="{Binding PlaylistImportErrorText}"
+              TextWrapping="Wrap" />
+
+          <Grid IsVisible="{Binding HasImportedPlaylists}" ColumnDefinitions="*,12,*,12,*">
+            <Border Padding="14" CornerRadius="8" Background="#20242D">
+              <StackPanel Spacing="4">
+                <TextBlock Foreground="#AAB1C0" Text="TOTAL PLAYLIST REFERENCES" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding TotalPlaylistReferences}" />
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Padding="14" CornerRadius="8" Background="#20242D">
+              <StackPanel Spacing="4">
+                <TextBlock Foreground="#AAB1C0" Text="UNIQUE REQUIRED HASHES" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding UniqueRequiredHashes}" />
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="4" Padding="14" CornerRadius="8" Background="#20242D">
+              <StackPanel Spacing="4">
+                <TextBlock Foreground="#AAB1C0" Text="DUPLICATE REFERENCES" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding DuplicateReferences}" />
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <Border IsVisible="{Binding HasImportedPlaylists}" Padding="16" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="14">
+              <ComboBox ItemsSource="{Binding ImportedPlaylists}" SelectedItem="{Binding SelectedImportedPlaylist}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="core:Playlist">
+                    <TextBlock Text="{Binding Name}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+
+              <StackPanel IsVisible="{Binding HasSelectedImportedPlaylist}" Spacing="4">
+                <TextBlock FontSize="26" FontWeight="SemiBold" Text="{Binding SelectedImportedPlaylist.Name}" />
+                <TextBlock FontSize="16" Foreground="#AAB1C0" Text="{Binding SelectedPlaylistAuthorDisplay}" />
+                <StackPanel Margin="0,8,0,0" Orientation="Horizontal" Spacing="18">
+                  <TextBlock Text="{Binding SelectedPlaylistEntryCount, StringFormat='{}{0} entries'}" />
+                  <TextBlock Text="{Binding SelectedPlaylistUniqueHashCount, StringFormat='{}{0} unique hashes'}" />
+                  <TextBlock Text="{Binding SelectedPlaylistDuplicateReferenceCount, StringFormat='{}{0} duplicate references'}" />
+                </StackPanel>
+              </StackPanel>
+
+              <Grid ColumnDefinitions="1.2*,2*,2*,1.2*" ColumnSpacing="16">
+                <TextBlock FontWeight="SemiBold" Text="Key" />
+                <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Hash" />
+                <TextBlock Grid.Column="2" FontWeight="SemiBold" Text="Song name" />
+                <TextBlock Grid.Column="3" FontWeight="SemiBold" Text="Identity" />
+              </Grid>
+              <Border Height="1" Background="#3A404D" />
+              <ItemsControl ItemsSource="{Binding SelectedImportedPlaylist.Entries}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:PlaylistEntry">
+                    <Grid Margin="0,7" ColumnDefinitions="1.2*,2*,2*,1.2*" ColumnSpacing="16">
+                      <TextBlock Text="{Binding Key}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="1" Text="{Binding Hash}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="2" Text="{Binding SongName}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="3" Text="{Binding IdentityStatus}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
           <TextBlock Foreground="#AAB1C0" Text="Read-only view of PlaylistManager playlists" />
           <Border Padding="16" CornerRadius="8" Background="#20242D">
             <StackPanel Spacing="8">

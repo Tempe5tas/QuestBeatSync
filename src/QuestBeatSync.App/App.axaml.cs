@@ -5,6 +5,7 @@ using QuestBeatSync.App.ViewModels;
 using QuestBeatSync.App.Views;
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Adb;
+using QuestBeatSync.Infrastructure.Importing;
 using QuestBeatSync.Infrastructure.Scanning;
 
 namespace QuestBeatSync.App;
@@ -34,6 +35,7 @@ public sealed partial class App : Application
             var viewModel = new MainWindowViewModel(
                 transport,
                 scanner,
+                new LocalBplistImporter(),
                 transportOptions,
                 settingsStore);
             desktop.MainWindow = new MainWindow

@@ -2,6 +2,7 @@ using QuestBeatSync.App.ViewModels;
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
+using QuestBeatSync.Infrastructure.Importing;
 
 namespace QuestBeatSync.Tests;
 
@@ -21,6 +22,7 @@ public sealed class MainWindowViewModelTests
         var viewModel = new MainWindowViewModel(
             new StubQuestTransport(devices),
             new StubBeatSaberScanner(),
+            new StubPlaylistImporter(),
             options,
             settingsStore);
 
@@ -61,6 +63,7 @@ public sealed class MainWindowViewModelTests
         var viewModel = new MainWindowViewModel(
             new StubQuestTransport([device]),
             new StubBeatSaberScanner(scanResult),
+            new StubPlaylistImporter(),
             options,
             settingsStore);
 
@@ -76,6 +79,42 @@ public sealed class MainWindowViewModelTests
         Assert.HasCount(1, viewModel.InstalledPlaylists);
     }
 
+    [TestMethod]
+    public async Task ImportPlaylistFilesAsync_PublishesMultiplePlaylistPreviewAndAggregateState()
+    {
+        var first = new Playlist("ACG", "Dana_Iclucia");
+        first.Add(new PlaylistEntry("one", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "One"));
+        first.Add(new PlaylistEntry("duplicate", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "Duplicate"));
+        first.Add(new PlaylistEntry("missing", null, "Missing hash"));
+        var second = new Playlist("J-Pop", "Author");
+        second.Add(new PlaylistEntry("shared", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "Shared"));
+        second.Add(new PlaylistEntry("two", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "Two"));
+        var importResults = new[]
+        {
+            new PlaylistImportResult("acg.bplist", first, null),
+            new PlaylistImportResult("jpop.bplist", second, null),
+            new PlaylistImportResult("broken.bplist", null, "Malformed .bplist JSON")
+        };
+        var options = new AdbQuestTransportOptions { AppDataToolsDirectory = "unused" };
+        var settingsStore = new AdbSettingsStore(Path.Combine(Path.GetTempPath(), "qbsync-unused-settings.json"));
+        var viewModel = new MainWindowViewModel(
+            new StubQuestTransport([]),
+            new StubBeatSaberScanner(),
+            new StubPlaylistImporter(importResults),
+            options,
+            settingsStore);
+
+        await viewModel.ImportPlaylistFilesAsync(["acg.bplist", "jpop.bplist", "broken.bplist"]);
+
+        Assert.HasCount(2, viewModel.ImportedPlaylists);
+        Assert.AreSame(first, viewModel.SelectedImportedPlaylist);
+        Assert.AreEqual("by Dana_Iclucia", viewModel.SelectedPlaylistAuthorDisplay);
+        Assert.AreEqual(5, viewModel.TotalPlaylistReferences);
+        Assert.AreEqual(2, viewModel.UniqueRequiredHashes);
+        Assert.AreEqual(2, viewModel.DuplicateReferences);
+        Assert.HasCount(1, viewModel.PlaylistImportErrors);
+    }
+
     private sealed class StubBeatSaberScanner(
         QuestBeatSaberScanResult? result = null) : IQuestBeatSaberScanner
     {
@@ -83,6 +122,15 @@ public sealed class MainWindowViewModelTests
             QuestDevice device,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result ?? QuestBeatSaberScanResult.Empty);
+    }
+
+    private sealed class StubPlaylistImporter(
+        IReadOnlyList<PlaylistImportResult>? results = null) : ILocalPlaylistImporter
+    {
+        public Task<IReadOnlyList<PlaylistImportResult>> ImportAsync(
+            IEnumerable<string> filePaths,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(results ?? []);
     }
 
     private sealed class StubQuestTransport(IReadOnlyList<QuestDevice> devices) : IQuestTransport

@@ -15,4 +15,8 @@
     <ProjectReference Include="..\..\src\QuestBeatSync.Core\QuestBeatSync.Core.csproj" />
     <ProjectReference Include="..\..\src\QuestBeatSync.Infrastructure\QuestBeatSync.Infrastructure.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Fixtures\*.bplist" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
