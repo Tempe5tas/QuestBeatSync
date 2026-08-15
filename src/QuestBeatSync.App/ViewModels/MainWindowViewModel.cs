@@ -38,6 +38,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _isBuildingSyncPlan;
     private SyncPlan? _syncPlan;
     private OperationError? _operationError;
+    private string? _syncResolutionMessage;
     private readonly Dictionary<Playlist, IReadOnlyList<PlaylistEntryStatusViewModel>> _playlistEntryStatuses = [];
 
     public MainWindowViewModel(
@@ -89,15 +90,15 @@ public sealed class MainWindowViewModel : ViewModelBase
         CheckBeatSaverCommand = new AsyncRelayCommand(
             CheckBeatSaverAsync,
             () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver,
-            exception => ReportOperationErrorAsync("Check BeatSaver", exception));
+            exception => ReportOperationErrorAsync("Check selected playlist", exception));
         CacheAvailableMapsCommand = new AsyncRelayCommand(
             CacheAvailableMapsAsync,
             () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver,
-            exception => ReportOperationErrorAsync("Cache maps", exception));
+            exception => ReportOperationErrorAsync("Cache selected playlist", exception));
         BuildSyncPlanCommand = new AsyncRelayCommand(
             BuildSyncPlanAsync,
             () => CanBuildSyncPlan && !IsBuildingSyncPlan,
-            exception => ReportOperationErrorAsync("Generate Sync Plan", exception));
+            exception => ReportOperationErrorAsync("Build Sync Plan", exception));
     }
 
     public Task InitializeAsync() => RefreshDevicesAsync();
@@ -555,6 +556,12 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public int SyncDeletionCount => 0;
 
+    public string? SyncResolutionMessage
+    {
+        get => _syncResolutionMessage;
+        private set => SetProperty(ref _syncResolutionMessage, value);
+    }
+
     public string SelectedPlaylistAuthorDisplay => string.IsNullOrWhiteSpace(SelectedImportedPlaylist?.Author)
         ? "by Unknown author"
         : $"by {SelectedImportedPlaylist.Author}";
@@ -815,40 +822,89 @@ public sealed class MainWindowViewModel : ViewModelBase
     private async Task BuildSyncPlanAsync()
     {
         IsBuildingSyncPlan = true;
+        InvalidateSyncPlan();
         try
         {
-            var requiredHashes = ImportedPlaylists
+            var requirements = ImportedPlaylists
                 .SelectMany(playlist => playlist.Entries)
                 .Where(entry => entry.Hash is not null)
-                .Select(entry => entry.Hash!)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .GroupBy(entry => entry.Hash!, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new
+                {
+                    Hash = group.Key,
+                    Key = group.Select(entry => entry.Key).FirstOrDefault(key => key is not null)
+                })
                 .ToArray();
             var cachedHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var hash in requiredHashes)
+            var availability = new Dictionary<string, BeatSaverAvailability>(StringComparer.OrdinalIgnoreCase);
+            var questHashes = InstalledMaps
+                .Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null)
+                .Select(map => map.Identity!.Hash)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var completed = 0;
+            SyncResolutionMessage = $"Resolving {requirements.Length} unique maps...";
+
+            foreach (var requirement in requirements)
             {
-                if (await _beatMapCache.IsCachedAsync(hash))
+                if (!questHashes.Contains(requirement.Hash))
                 {
-                    cachedHashes.Add(hash);
+                    var isCached = await _beatMapCache.IsCachedAsync(requirement.Hash);
+                    if (isCached)
+                    {
+                        cachedHashes.Add(requirement.Hash);
+                        UpdateRequirementStatuses(requirement.Hash, cachedLocally: "Yes");
+                    }
+                    else
+                    {
+                        var result = await _beatSaverClient.LookupAsync(
+                            new BeatSaverLookupRequest(requirement.Hash, requirement.Key));
+                        availability[requirement.Hash] = result.Availability;
+                        UpdateRequirementStatuses(
+                            requirement.Hash,
+                            cachedLocally: "No",
+                            lookupResult: result);
+                    }
                 }
+
+                completed++;
+                SyncResolutionMessage = $"Resolving {completed}/{requirements.Length} unique maps...";
             }
 
-            var availability = _playlistEntryStatuses.Values
-                .SelectMany(statuses => statuses)
-                .Where(item => item.Hash is not null)
-                .GroupBy(item => item.Hash!, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => ResolveConservativeAvailability(group.Select(item => item.Availability)),
-                    StringComparer.OrdinalIgnoreCase);
             var library = new QuestLibrary(installedMaps: InstalledMaps);
             var plan = SyncPlanner.Build(ImportedPlaylists, library, cachedHashes, availability);
 
             ReplaceContents(SyncOperations, plan.Operations);
             SyncPlan = plan;
+            SyncResolutionMessage =
+                $"Resolved {plan.UniqueMapCount} unique maps across {plan.PlaylistReferenceCount} playlist references.";
         }
         finally
         {
+            if (SyncPlan is null)
+            {
+                SyncResolutionMessage = "Sync requirement resolution did not complete.";
+            }
+
             IsBuildingSyncPlan = false;
+        }
+    }
+
+    private void UpdateRequirementStatuses(
+        string hash,
+        string cachedLocally,
+        BeatSaverLookupResult? lookupResult = null)
+    {
+        foreach (var item in _playlistEntryStatuses.Values
+                     .SelectMany(statuses => statuses)
+                     .Where(item => string.Equals(item.Hash, hash, StringComparison.OrdinalIgnoreCase)))
+        {
+            item.CachedLocally = cachedLocally;
+            if (lookupResult is not null)
+            {
+                item.LookupResult = lookupResult;
+                item.Availability = lookupResult.Availability;
+                item.StatusMessage = lookupResult.Message;
+            }
         }
     }
 
@@ -856,20 +912,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     {
         SyncPlan = null;
         SyncOperations.Clear();
-    }
-
-    private static BeatSaverAvailability ResolveConservativeAvailability(
-        IEnumerable<BeatSaverAvailability> values)
-    {
-        var availability = values.ToArray();
-        if (availability.Contains(BeatSaverAvailability.Online))
-        {
-            return BeatSaverAvailability.Online;
-        }
-
-        return availability.All(value => value == BeatSaverAvailability.Unavailable)
-            ? BeatSaverAvailability.Unavailable
-            : BeatSaverAvailability.Unknown;
+        SyncResolutionMessage = null;
     }
 
     private async Task RefreshLocalAndQuestStatusAsync(IEnumerable<PlaylistEntryStatusViewModel> statuses)

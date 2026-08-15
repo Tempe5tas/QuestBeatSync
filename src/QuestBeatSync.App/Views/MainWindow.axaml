@@ -262,8 +262,8 @@
                   <TextBlock Text="{Binding SelectedPlaylistDuplicateReferenceCount, StringFormat='{}{0} duplicate references'}" />
                 </StackPanel>
                 <StackPanel Margin="0,10,0,0" Orientation="Horizontal" Spacing="10">
-                  <Button Command="{Binding CheckBeatSaverCommand}" Content="Check BeatSaver" />
-                  <Button Command="{Binding CacheAvailableMapsCommand}" Content="Cache available maps" />
+                  <Button Command="{Binding CheckBeatSaverCommand}" Content="Check selected playlist" />
+                  <Button Command="{Binding CacheAvailableMapsCommand}" Content="Cache selected available maps" />
                   <ProgressBar Width="130" IsIndeterminate="True" IsVisible="{Binding IsCheckingBeatSaver}" />
                 </StackPanel>
               </StackPanel>
@@ -339,7 +339,7 @@
                 Grid.Column="1"
                 VerticalAlignment="Center"
                 Command="{Binding BuildSyncPlanCommand}"
-                Content="Generate Sync Plan" />
+                Content="Build Sync Plan" />
           </Grid>
 
           <Border Padding="16" CornerRadius="8" Background="#31281D" BorderBrush="#D7A95B" BorderThickness="1">
@@ -351,6 +351,14 @@
           </Border>
 
           <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBuildingSyncPlan}" />
+          <TextBlock
+              IsVisible="{Binding IsBuildingSyncPlan}"
+              Foreground="#AAB1C0"
+              Text="{Binding SyncResolutionMessage}" />
+          <TextBlock
+              IsVisible="{Binding HasSyncPlan}"
+              Foreground="#83C98E"
+              Text="{Binding SyncResolutionMessage}" />
           <TextBlock
               IsVisible="{Binding !CanBuildSyncPlan}"
               Foreground="#D7A95B"

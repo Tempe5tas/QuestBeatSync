@@ -84,7 +84,7 @@ ADB 可执行文件的查找顺序是：
 3. 等待 Beat Saber 环境只读扫描完成。
 4. 在 Playlists 页面导入 `.bplist`。
 5. 按需查询 BeatSaver，并将可用谱面缓存到本机。
-6. 打开 Sync 页面，点击 **Generate Sync Plan**。
+6. 打开 Sync 页面，点击 **Build Sync Plan**。应用会自动汇总全部已导入歌单、按 hash 去重，并解析生成计划所需的 BeatSaver 状态。
 7. 检查统计和每一条 operation；当前版本不会执行这些 operation。
 
 ## 本地数据

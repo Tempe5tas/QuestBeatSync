@@ -181,10 +181,56 @@ public sealed class MainWindowViewModelTests
         await viewModel.BuildSyncPlanCommand.ExecuteAsync();
 
         Assert.IsTrue(viewModel.HasOperationError);
-        StringAssert.Contains(viewModel.OperationErrorText!, "Generate Sync Plan");
+        StringAssert.Contains(viewModel.OperationErrorText!, "Build Sync Plan");
         StringAssert.Contains(viewModel.OperationErrorText!, "cache read failed");
         viewModel.DismissOperationErrorCommand.Execute(null);
         Assert.IsFalse(viewModel.HasOperationError);
+    }
+
+    [TestMethod]
+    public async Task BuildSyncPlan_ResolvesUniqueHashesAcrossAllImportedPlaylists()
+    {
+        const string hashA = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        const string hashB = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        var first = new Playlist("ACG");
+        first.Add(new PlaylistEntry("a", hashA, "A"));
+        var second = new Playlist("Rock");
+        second.Add(new PlaylistEntry("b", hashB, "B"));
+        second.Add(new PlaylistEntry("a-duplicate", hashA, "A again"));
+        var beatSaver = new RecordingOnlineBeatSaverClient();
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var options = new AdbQuestTransportOptions { AppDataToolsDirectory = "unused" };
+        var settingsStore = new AdbSettingsStore(Path.Combine(Path.GetTempPath(), "qbsync-unused-settings.json"));
+        var viewModel = new MainWindowViewModel(
+            new StubQuestTransport([device]),
+            new StubBeatSaberScanner(),
+            new StubPlaylistImporter(
+            [
+                new PlaylistImportResult("acg.bplist", first, null),
+                new PlaylistImportResult("rock.bplist", second, null)
+            ]),
+            beatSaver,
+            new FakeBeatMapCache(),
+            options,
+            settingsStore);
+        await viewModel.InitializeAsync();
+        await viewModel.ImportPlaylistFilesAsync(["acg.bplist", "rock.bplist"]);
+
+        await viewModel.BuildSyncPlanCommand.ExecuteAsync();
+
+        CollectionAssert.AreEquivalent(new[] { hashA, hashB }, beatSaver.RequestedHashes.ToArray());
+        Assert.HasCount(2, beatSaver.RequestedHashes);
+        Assert.AreEqual(2, viewModel.SyncDownloadRequired);
+        Assert.AreEqual(2, viewModel.SyncUploadRequired);
+        Assert.AreEqual(0, viewModel.SyncUnknown);
+        Assert.AreEqual(2, viewModel.SyncUniqueMaps);
+        StringAssert.Contains(viewModel.SyncResolutionMessage!, "Resolved 2 unique maps");
+        Assert.IsTrue(viewModel.SelectedPlaylistEntries.All(item =>
+            item.Availability == BeatSaverAvailability.Online));
+
+        viewModel.SelectedImportedPlaylist = second;
+        Assert.IsTrue(viewModel.SelectedPlaylistEntries.All(item =>
+            item.Availability == BeatSaverAvailability.Online));
     }
 
     private static MainWindowViewModel CreateViewModel(
@@ -279,6 +325,33 @@ public sealed class MainWindowViewModelTests
 
         public Task<BeatMapCacheResult> CacheAsync(
             BeatSaverLookupResult lookup,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class RecordingOnlineBeatSaverClient : IBeatSaverClient
+    {
+        public List<string> RequestedHashes { get; } = [];
+
+        public Task<BeatSaverLookupResult> LookupAsync(
+            BeatSaverLookupRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var hash = request.Hash!;
+            RequestedHashes.Add(hash);
+            return Task.FromResult(new BeatSaverLookupResult(
+                BeatSaverAvailability.Online,
+                hash,
+                request.Key,
+                hash,
+                request.Key,
+                new Uri($"https://example.test/{hash}.zip"),
+                true));
+        }
+
+        public Task DownloadZipAsync(
+            Uri downloadUri,
+            Stream destination,
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
