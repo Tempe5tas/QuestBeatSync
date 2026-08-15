@@ -8,7 +8,7 @@ namespace QuestBeatSync.App.ViewModels;
 public sealed class SyncViewModel : ViewModelBase
 {
     private readonly PlaylistsViewModel _playlists; private readonly LibraryViewModel _library; private readonly IBeatSaverClient _beatSaver; private readonly IBeatMapCache _cache;
-    private SyncPlan? _plan; private bool _isBuilding; private string? _message;
+    private SyncPlan? _plan; private SyncExecutionPlan? _executionPlan; private bool _isBuilding; private string? _message;
 
     public SyncViewModel(PlaylistsViewModel playlists, LibraryViewModel library, IBeatSaverClient beatSaver, IBeatMapCache cache, Func<Exception, Task> errorHandler)
     {
@@ -22,6 +22,7 @@ public sealed class SyncViewModel : ViewModelBase
     public bool CanBuild => _library.ScanCompleted;
     public bool IsBuilding { get => _isBuilding; private set { if (SetProperty(ref _isBuilding, value)) BuildCommand.RaiseCanExecuteChanged(); } }
     public bool HasPlan => Plan is not null;
+    public SyncExecutionPlan? ExecutionPlan { get => _executionPlan; private set => SetProperty(ref _executionPlan, value); }
     public SyncPlan? Plan { get => _plan; private set { if (SetProperty(ref _plan, value)) { OnPropertyChanged(nameof(HasPlan)); NotifyCounts(); } } }
     public string? ResolutionMessage { get => _message; private set => SetProperty(ref _message, value); }
     public int PlaylistReferences => Plan?.PlaylistReferenceCount ?? 0; public int UniqueMaps => Plan?.UniqueMapCount ?? 0;
@@ -34,7 +35,7 @@ public sealed class SyncViewModel : ViewModelBase
         try
         {
             var requirements = _playlists.ImportedPlaylists.SelectMany(p => p.Entries).Where(e => e.Hash is not null).GroupBy(e => e.Hash!, StringComparer.OrdinalIgnoreCase).Select(g => (Hash: g.Key, Key: g.Select(e => e.Key).FirstOrDefault(k => k is not null))).ToArray();
-            var cached = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var availability = new Dictionary<string, BeatSaverAvailability>(StringComparer.OrdinalIgnoreCase);
+            var cached = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var availability = new Dictionary<string, BeatSaverAvailability>(StringComparer.OrdinalIgnoreCase); var exactLookups = new Dictionary<string, BeatSaverLookupResult>(StringComparer.OrdinalIgnoreCase);
             var installed = _library.InstalledMaps.Where(m => m.IdentityStatus == QuestMapIdentityStatus.HashIdentified && m.Identity is not null).Select(m => m.Identity!.Hash).ToHashSet(StringComparer.OrdinalIgnoreCase);
             ResolutionMessage = $"Resolving {requirements.Length} unique maps..."; var completed = 0;
             foreach (var requirement in requirements)
@@ -46,12 +47,17 @@ public sealed class SyncViewModel : ViewModelBase
                     {
                         var lookup = FindReusable(requirement.Hash) ?? await _beatSaver.LookupAsync(new(requirement.Hash, requirement.Key));
                         availability[requirement.Hash] = lookup.Availability; _playlists.UpdateRequirement(requirement.Hash, "No", lookup);
+                        if (lookup.ExactHashMatched) exactLookups[requirement.Hash] = lookup;
                     }
                 }
                 ResolutionMessage = $"Resolving {++completed}/{requirements.Length} unique maps...";
             }
             var plan = SyncPlanner.Build(_playlists.ImportedPlaylists, new QuestLibrary(_library.InstalledMaps, _library.InstalledPlaylists), cached, availability);
-            Replace(Operations, plan.Operations); Plan = plan; ResolutionMessage = $"Resolved {plan.UniqueMapCount} unique maps across {plan.PlaylistReferenceCount} playlist references.";
+            Replace(Operations, plan.Operations); Plan = plan;
+            var sources = _playlists.ImportedPlaylists.Select(playlist => playlist.SourceIdentity).Where(source => source is not null).Cast<PlaylistSourceIdentity>().ToArray();
+            if (_library.ScanBinding is not null && sources.Length == _playlists.ImportedPlaylists.Count)
+                ExecutionPlan = new SyncExecutionPlan(plan, _library.ScanBinding, sources, exactLookups);
+            ResolutionMessage = $"Resolved {plan.UniqueMapCount} unique maps across {plan.PlaylistReferenceCount} playlist references.";
         }
         finally { if (Plan is null) ResolutionMessage = "Sync requirement resolution did not complete."; IsBuilding = false; }
     }
@@ -66,7 +72,7 @@ public sealed class SyncViewModel : ViewModelBase
                     || (result.Availability == BeatSaverAvailability.Online
                         && result.ExactHashMatched
                         && string.Equals(result.ResolvedHash, hash, StringComparison.OrdinalIgnoreCase))));
-    private void Invalidate() { Plan = null; Operations.Clear(); ResolutionMessage = null; }
+    private void Invalidate() { Plan = null; ExecutionPlan = null; Operations.Clear(); ResolutionMessage = null; }
     private void NotifyCounts() { OnPropertyChanged(nameof(PlaylistReferences)); OnPropertyChanged(nameof(UniqueMaps)); OnPropertyChanged(nameof(AlreadyInstalled)); OnPropertyChanged(nameof(DownloadRequired)); OnPropertyChanged(nameof(UploadRequired)); OnPropertyChanged(nameof(Unavailable)); OnPropertyChanged(nameof(Unknown)); OnPropertyChanged(nameof(QuestOnlyPreserved)); OnPropertyChanged(nameof(DeletionCount)); }
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items) { target.Clear(); foreach (var item in items) target.Add(item); }
 }

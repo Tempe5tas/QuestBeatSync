@@ -15,4 +15,5 @@ public sealed record SyncOperation(
     SyncOperationKind Kind,
     string Description,
     BeatMapIdentity? MapIdentity = null,
-    string? PlaylistName = null);
+    string? PlaylistName = null,
+    PlaylistSourceIdentity? PlaylistSource = null);

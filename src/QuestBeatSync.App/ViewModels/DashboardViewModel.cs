@@ -125,7 +125,7 @@ public sealed class DashboardViewModel : ViewModelBase
             if (!current.IsCancellationRequested)
             {
                 SetDetection(result.BeatSaberDetected, result.SongCoreDetected, result.PlaylistManagerDetected);
-                Library.Apply(result, scanCompleted: true);
+                Library.Apply(result, scanCompleted: true, device.Serial);
             }
         }
         catch (OperationCanceledException) when (current.IsCancellationRequested) { }

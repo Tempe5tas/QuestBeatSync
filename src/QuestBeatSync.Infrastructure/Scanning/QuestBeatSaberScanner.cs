@@ -75,6 +75,11 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
 
         foreach (var folderPath in folders)
         {
+            if (GetRemoteName(folderPath).StartsWith(".qbsync-", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             maps.Add(await ScanMapAsync(device, folderPath, warnings, cancellationToken).ConfigureAwait(false));
         }
 

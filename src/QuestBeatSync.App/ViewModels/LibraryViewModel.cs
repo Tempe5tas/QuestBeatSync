@@ -6,6 +6,7 @@ namespace QuestBeatSync.App.ViewModels;
 public sealed class LibraryViewModel : ViewModelBase
 {
     private bool _scanCompleted;
+    private QuestBeatSaberScanResult _scanResult = QuestBeatSaberScanResult.Empty;
 
     public ObservableCollection<QuestInstalledMap> InstalledMaps { get; } = [];
 
@@ -31,12 +32,20 @@ public sealed class LibraryViewModel : ViewModelBase
 
     public bool HasScanWarnings => ScanWarnings.Count > 0;
 
+    public QuestScanBinding? ScanBinding { get; private set; }
+
+    public QuestBeatSaberScanResult ScanResult => _scanResult;
+
     public event EventHandler? Changed;
 
     public void Reset(bool scanCompleted = false) => Apply(QuestBeatSaberScanResult.Empty, scanCompleted);
 
-    public void Apply(QuestBeatSaberScanResult result, bool scanCompleted)
+    public void Apply(QuestBeatSaberScanResult result, bool scanCompleted, string? deviceSerial = null)
     {
+        _scanResult = result;
+        ScanBinding = scanCompleted && !string.IsNullOrWhiteSpace(deviceSerial)
+            ? QuestScanBinding.Capture(deviceSerial, result)
+            : null;
         Replace(InstalledMaps, result.InstalledMaps);
         Replace(InstalledPlaylists, result.InstalledPlaylists);
         Replace(ScanWarnings, result.Warnings);
@@ -47,6 +56,8 @@ public sealed class LibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasInstalledMaps));
         OnPropertyChanged(nameof(HasInstalledPlaylists));
         OnPropertyChanged(nameof(HasScanWarnings));
+        OnPropertyChanged(nameof(ScanBinding));
+        OnPropertyChanged(nameof(ScanResult));
         Changed?.Invoke(this, EventArgs.Empty);
     }
 

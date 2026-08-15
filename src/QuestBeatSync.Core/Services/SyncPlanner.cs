@@ -15,7 +15,7 @@ public static class SyncPlanner
         ArgumentNullException.ThrowIfNull(locallyCachedHashes);
         ArgumentNullException.ThrowIfNull(beatSaverAvailabilityByHash);
 
-        var playlists = desiredPlaylists.ToArray();
+        var playlists = DeduplicatePlaylists(desiredPlaylists);
         var cachedHashes = locallyCachedHashes
             .Where(BeatSaverHash.IsValid)
             .Select(BeatSaverHash.Normalize)
@@ -125,7 +125,8 @@ public static class SyncPlanner
             plan.Add(new SyncOperation(
                 SyncOperationKind.ImportPlaylist,
                 $"Import playlist: {playlist.Name}",
-                PlaylistName: playlist.Name));
+                PlaylistName: playlist.Name,
+                PlaylistSource: playlist.SourceIdentity));
         }
 
         return plan;
@@ -146,6 +147,21 @@ public static class SyncPlanner
 
     private static string UnresolvedEntryKey(PlaylistEntry entry) =>
         entry.Key ?? entry.SongName ?? "<anonymous>";
+
+    private static Playlist[] DeduplicatePlaylists(IEnumerable<Playlist> playlists)
+    {
+        var result = new List<Playlist>();
+        var seenSources = new HashSet<string>(SyncExecutionPlan.SourcePathComparer);
+        foreach (var playlist in playlists)
+        {
+            if (playlist.SourceIdentity is null || seenSources.Add(playlist.SourceIdentity.CanonicalPath))
+            {
+                result.Add(playlist);
+            }
+        }
+
+        return result.ToArray();
+    }
 
     private static BeatSaverAvailability ResolveAvailability(IEnumerable<BeatSaverAvailability> values)
     {

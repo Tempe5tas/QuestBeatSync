@@ -87,6 +87,21 @@ public sealed class BplistImportTests
     }
 
     [TestMethod]
+    public async Task ImportAsync_CanonicalizesHashesAndDeduplicatesTheSameSourceFile()
+    {
+        var fixture = FixturePath("unicode-identity.bplist");
+
+        var results = await new LocalBplistImporter().ImportAsync([fixture, Path.GetFullPath(fixture)]);
+
+        Assert.HasCount(1, results);
+        Assert.IsTrue(results[0].IsSuccess, results[0].ErrorMessage);
+        var source = results[0].Playlist!.SourceIdentity;
+        Assert.IsNotNull(source);
+        Assert.AreEqual(Path.GetFullPath(fixture), source.CanonicalPath);
+        Assert.AreEqual(64, source.ContentSha256.Length);
+    }
+
+    [TestMethod]
     public void Parser_RetainsMalformedHashAsUnidentifiedEntry()
     {
         var playlist = BplistParser.Parse(

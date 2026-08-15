@@ -10,7 +10,8 @@ public sealed class Playlist
         string? description = null,
         string? image = null,
         string? syncUrl = null,
-        string? sourcePath = null)
+        string? sourcePath = null,
+        string? sourceContentSha256 = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Name = name.Trim();
@@ -19,6 +20,9 @@ public sealed class Playlist
         Image = Normalize(image);
         SyncUrl = Normalize(syncUrl);
         SourcePath = Normalize(sourcePath);
+        SourceIdentity = SourcePath is not null && sourceContentSha256 is not null
+            ? new PlaylistSourceIdentity(SourcePath, sourceContentSha256)
+            : null;
     }
 
     public string Name { get; }
@@ -32,6 +36,8 @@ public sealed class Playlist
     public string? SyncUrl { get; }
 
     public string? SourcePath { get; }
+
+    public PlaylistSourceIdentity? SourceIdentity { get; }
 
     public IReadOnlyList<PlaylistEntry> Entries => _entries;
 

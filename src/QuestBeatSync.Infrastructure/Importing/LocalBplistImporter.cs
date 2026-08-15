@@ -1,4 +1,6 @@
 using System.Text;
+using System.Security.Cryptography;
+using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 
 namespace QuestBeatSync.Infrastructure.Importing;
@@ -16,10 +18,31 @@ public sealed class LocalBplistImporter : ILocalPlaylistImporter
         ArgumentNullException.ThrowIfNull(filePaths);
         var results = new List<PlaylistImportResult>();
 
+        var seenPaths = new HashSet<string>(SyncExecutionPlan.SourcePathComparer);
         foreach (var filePath in filePaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await ImportOneAsync(filePath, cancellationToken).ConfigureAwait(false));
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                results.Add(new PlaylistImportResult(string.Empty, null, "Playlist path is empty."));
+                continue;
+            }
+
+            string canonicalPath;
+            try
+            {
+                canonicalPath = Path.GetFullPath(filePath);
+            }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                results.Add(new PlaylistImportResult(filePath, null, $"Playlist path is invalid: {exception.Message}"));
+                continue;
+            }
+
+            if (seenPaths.Add(canonicalPath))
+            {
+                results.Add(await ImportOneAsync(canonicalPath, cancellationToken).ConfigureAwait(false));
+            }
         }
 
         return results;
@@ -41,9 +64,11 @@ public sealed class LocalBplistImporter : ILocalPlaylistImporter
 
         try
         {
-            var json = await File.ReadAllTextAsync(filePath, StrictUtf8, cancellationToken).ConfigureAwait(false);
+            var bytes = await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
+            var json = StrictUtf8.GetString(bytes);
+            var contentSha256 = Convert.ToHexString(SHA256.HashData(bytes));
             var playlist = await Task.Run(
-                () => BplistParser.Parse(json, filePath),
+                () => BplistParser.Parse(json, filePath, contentSha256),
                 cancellationToken).ConfigureAwait(false);
             return new PlaylistImportResult(filePath, playlist, null);
         }

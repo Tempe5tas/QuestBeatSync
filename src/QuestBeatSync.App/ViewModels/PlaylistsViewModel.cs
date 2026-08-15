@@ -68,7 +68,16 @@ public sealed class PlaylistsViewModel : ViewModelBase
             foreach (var result in results)
             {
                 if (!result.IsSuccess) { ImportErrors.Add($"{Path.GetFileName(result.FilePath)}: {result.ErrorMessage}"); continue; }
-                var playlist = result.Playlist!; first ??= playlist; ImportedPlaylists.Add(playlist);
+                var playlist = result.Playlist!;
+                if (playlist.SourceIdentity is not null && ImportedPlaylists.Any(existing =>
+                        existing.SourceIdentity is not null && SyncExecutionPlan.SourcePathComparer.Equals(
+                            existing.SourceIdentity.CanonicalPath,
+                            playlist.SourceIdentity.CanonicalPath)))
+                {
+                    continue;
+                }
+
+                first ??= playlist; ImportedPlaylists.Add(playlist);
                 var statuses = playlist.Entries.Select(entry => new PlaylistEntryStatusViewModel(entry)).ToArray();
                 _statuses[playlist] = statuses;
                 foreach (var item in statuses) item.CachedLocally = item.Hash is not null && await _cache.IsCachedAsync(item.Hash) ? "Yes" : item.Hash is null ? "Unknown" : "No";

@@ -76,6 +76,19 @@ public sealed class QuestBeatSaberScannerTests
     }
 
     [TestMethod]
+    public async Task ScanAsync_IgnoresQbSyncStagingDirectories()
+    {
+        var fixture = CreateDetectedEnvironment();
+        AddMap(fixture, ".qbsync-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-run", "Incomplete", "QBSync");
+        AddMap(fixture, "Normal Folder", "Visible", "Mapper");
+
+        var result = await CreateScanner(fixture).ScanAsync(Device);
+
+        Assert.HasCount(1, result.InstalledMaps);
+        Assert.AreEqual("Normal Folder", result.InstalledMaps[0].FolderName);
+    }
+
+    [TestMethod]
     public async Task ScanAsync_ExactFortyHexFolderFlowsIntoPlannerAsKeepExisting()
     {
         const string hash = "0123456789ABCDEF0123456789ABCDEF01234567";

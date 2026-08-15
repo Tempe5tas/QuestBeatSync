@@ -5,7 +5,10 @@ namespace QuestBeatSync.Infrastructure.Importing;
 
 public static class BplistParser
 {
-    public static Playlist Parse(string json, string? sourcePath = null)
+    public static Playlist Parse(
+        string json,
+        string? sourcePath = null,
+        string? sourceContentSha256 = null)
     {
         ArgumentNullException.ThrowIfNull(json);
 
@@ -25,7 +28,8 @@ public static class BplistParser
                 GetOptionalString(root, "playlistDescription"),
                 GetOptionalString(root, "image"),
                 GetNestedOptionalString(root, "customData", "syncURL"),
-                sourcePath);
+                sourcePath,
+                sourceContentSha256);
 
             if (!root.TryGetProperty("songs", out var songs) || songs.ValueKind != JsonValueKind.Array)
             {
@@ -86,4 +90,3 @@ public static class BplistParser
             : null;
     }
 }
-

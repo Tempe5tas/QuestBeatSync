@@ -52,6 +52,34 @@ public sealed class WorkflowViewModelTests
         Assert.AreEqual(0, sync.Unknown);
     }
 
+    [TestMethod]
+    public async Task SyncPreflight_CreatesDeviceAndSourceBoundExecutionPlan()
+    {
+        var playlist = new Playlist(
+            "Bound",
+            sourcePath: Path.Combine(Path.GetTempPath(), "bound.bplist"),
+            sourceContentSha256: new string('A', 64));
+        playlist.Add(new PlaylistEntry("1a2b", Hash, "Known"));
+        var client = new RecordingClient();
+        var library = new LibraryViewModel();
+        library.Apply(QuestBeatSaberScanResult.Empty, scanCompleted: true, deviceSerial: "QUEST-BOUND");
+        var playlists = new PlaylistsViewModel(new StubImporter(playlist), client, new RecordingCache(), library, _ => Task.CompletedTask);
+        var sync = new SyncViewModel(playlists, library, client, new RecordingCache(), _ => Task.CompletedTask);
+        await playlists.ImportAsync([playlist.SourceIdentity!.CanonicalPath]);
+
+        await sync.BuildCommand.ExecuteAsync();
+
+        Assert.IsNotNull(sync.ExecutionPlan);
+        Assert.AreEqual("QUEST-BOUND", sync.ExecutionPlan.Target.DeviceSerial);
+        Assert.AreEqual(playlist.SourceIdentity, AssertSingle(sync.ExecutionPlan.PlaylistSources));
+    }
+
+    private static T AssertSingle<T>(IReadOnlyList<T> items)
+    {
+        Assert.HasCount(1, items);
+        return items[0];
+    }
+
     private sealed class StubImporter(Playlist playlist) : ILocalPlaylistImporter
     {
         public Task<IReadOnlyList<PlaylistImportResult>> ImportAsync(IEnumerable<string> filePaths, CancellationToken cancellationToken = default) =>
