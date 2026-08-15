@@ -3,7 +3,9 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using QuestBeatSync.App.ViewModels;
 using QuestBeatSync.App.Views;
+using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Adb;
+using QuestBeatSync.Infrastructure.Scanning;
 
 namespace QuestBeatSync.App;
 
@@ -24,9 +26,14 @@ public sealed partial class App : Application
                 ConfiguredExecutablePath = settingsStore.LoadConfiguredPath(),
                 AppDataToolsDirectory = Path.Combine(appDataDirectory, "tools")
             };
+            var transport = new AdbQuestTransport(transportOptions);
+            var scanner = new QuestBeatSaberScanner(
+                new AdbQuestRemoteFileSystem(transport),
+                QuestBeatSaberPaths.Default);
 
             var viewModel = new MainWindowViewModel(
-                new AdbQuestTransport(transportOptions),
+                transport,
+                scanner,
                 transportOptions,
                 settingsStore);
             desktop.MainWindow = new MainWindow

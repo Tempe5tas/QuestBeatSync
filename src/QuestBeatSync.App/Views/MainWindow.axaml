@@ -103,6 +103,25 @@
             </StackPanel>
           </Border>
 
+          <Border Padding="20" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="10">
+              <TextBlock FontSize="13" Foreground="#AAB1C0" Text="BEAT SABER ENVIRONMENT" />
+              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsEnvironmentScanning}" />
+              <TextBlock Text="{Binding BeatSaberStatus}" />
+              <TextBlock Text="{Binding SongCoreStatus}" />
+              <TextBlock Text="{Binding PlaylistManagerStatus}" />
+              <TextBlock
+                  IsVisible="{Binding HasEnvironmentError}"
+                  Foreground="#E88A8A"
+                  Text="{Binding EnvironmentError}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  IsVisible="{Binding HasScanWarnings}"
+                  Foreground="#D7A95B"
+                  Text="{Binding ScanWarningCount, StringFormat='{}{0} scan warning(s)'}" />
+            </StackPanel>
+          </Border>
+
           <Grid ColumnDefinitions="*,18,*">
             <Border Padding="20" CornerRadius="8" Background="#20242D">
               <StackPanel Spacing="6">
@@ -117,6 +136,74 @@
               </StackPanel>
             </Border>
           </Grid>
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding IsLibrary}" Spacing="14">
+          <TextBlock Foreground="#AAB1C0" Text="Read-only view of CustomLevels" />
+          <Border Padding="16" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="2*,2*,1.5*,Auto,1.2*" ColumnSpacing="16">
+                <TextBlock FontWeight="SemiBold" Text="Folder" />
+                <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Song title" />
+                <TextBlock Grid.Column="2" FontWeight="SemiBold" Text="Mapper" />
+                <TextBlock Grid.Column="3" FontWeight="SemiBold" Text="Info.dat" />
+                <TextBlock Grid.Column="4" FontWeight="SemiBold" Text="Identity" />
+              </Grid>
+              <Border Height="1" Background="#3A404D" />
+              <TextBlock
+                  IsVisible="{Binding !HasInstalledMaps}"
+                  Margin="0,10"
+                  Foreground="#8C94A5"
+                  Text="No custom songs found." />
+              <ItemsControl ItemsSource="{Binding InstalledMaps}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:QuestInstalledMap">
+                    <Grid Margin="0,7" ColumnDefinitions="2*,2*,1.5*,Auto,1.2*" ColumnSpacing="16">
+                      <TextBlock Text="{Binding FolderName}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding RemotePath}" />
+                      <TextBlock Grid.Column="1" Text="{Binding SongTitle}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="2" Text="{Binding Mapper}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="3" HorizontalAlignment="Center" Text="{Binding InfoDatExists}" />
+                      <TextBlock Grid.Column="4" Text="{Binding IdentityStatus}" ToolTip.Tip="{Binding Warning}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding IsPlaylists}" Spacing="14">
+          <TextBlock Foreground="#AAB1C0" Text="Read-only view of PlaylistManager playlists" />
+          <Border Padding="16" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="8">
+              <Grid ColumnDefinitions="2*,2*,Auto,Auto,2*" ColumnSpacing="16">
+                <TextBlock FontWeight="SemiBold" Text="Filename" />
+                <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Playlist title" />
+                <TextBlock Grid.Column="2" FontWeight="SemiBold" Text="Songs" />
+                <TextBlock Grid.Column="3" FontWeight="SemiBold" Text="Format" />
+                <TextBlock Grid.Column="4" FontWeight="SemiBold" Text="Warning" />
+              </Grid>
+              <Border Height="1" Background="#3A404D" />
+              <TextBlock
+                  IsVisible="{Binding !HasInstalledPlaylists}"
+                  Margin="0,10"
+                  Foreground="#8C94A5"
+                  Text="No playlists found." />
+              <ItemsControl ItemsSource="{Binding InstalledPlaylists}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:QuestInstalledPlaylist">
+                    <Grid Margin="0,7" ColumnDefinitions="2*,2*,Auto,Auto,2*" ColumnSpacing="16">
+                      <TextBlock Text="{Binding Filename}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding RemotePath}" />
+                      <TextBlock Grid.Column="1" Text="{Binding PlaylistTitle}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="2" HorizontalAlignment="Center" Text="{Binding SongReferenceCount}" />
+                      <TextBlock Grid.Column="3" Text="{Binding Format}" />
+                      <TextBlock Grid.Column="4" Foreground="#D7A95B" Text="{Binding Warning}" TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
         </StackPanel>
 
         <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">

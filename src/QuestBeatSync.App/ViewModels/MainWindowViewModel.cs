@@ -8,22 +8,32 @@ namespace QuestBeatSync.App.ViewModels;
 public sealed class MainWindowViewModel : ViewModelBase
 {
     private readonly IQuestTransport _questTransport;
+    private readonly IQuestBeatSaberScanner _beatSaberScanner;
     private readonly AdbQuestTransportOptions _adbOptions;
     private readonly AdbSettingsStore _settingsStore;
+    private CancellationTokenSource? _scanCancellationSource;
     private NavigationItemViewModel? _selectedPage;
     private QuestDevice? _selectedDevice;
     private QuestDeviceDiscoveryStatus _discoveryStatus = QuestDeviceDiscoveryStatus.Success;
     private string? _errorMessage;
+    private string? _environmentError;
     private string? _configuredAdbPath;
     private string? _settingsMessage;
     private bool _isRefreshing;
+    private bool _isEnvironmentScanning;
+    private bool _beatSaberDetected;
+    private bool _songCoreDetected;
+    private bool _playlistManagerDetected;
+    private bool _environmentScanCompleted;
 
     public MainWindowViewModel(
         IQuestTransport questTransport,
+        IQuestBeatSaberScanner beatSaberScanner,
         AdbQuestTransportOptions adbOptions,
         AdbSettingsStore settingsStore)
     {
         _questTransport = questTransport ?? throw new ArgumentNullException(nameof(questTransport));
+        _beatSaberScanner = beatSaberScanner ?? throw new ArgumentNullException(nameof(beatSaberScanner));
         _adbOptions = adbOptions ?? throw new ArgumentNullException(nameof(adbOptions));
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _configuredAdbPath = adbOptions.ConfiguredExecutablePath;
@@ -37,12 +47,14 @@ public sealed class MainWindowViewModel : ViewModelBase
             new("Settings")
         };
         Devices = [];
+        InstalledMaps = [];
+        InstalledPlaylists = [];
+        ScanWarnings = [];
         _selectedPage = NavigationItems[0];
 
         RefreshDevicesCommand = new AsyncRelayCommand(RefreshDevicesAsync, () => !IsRefreshing);
         OpenSettingsCommand = new RelayCommand(OpenSettings);
         SaveAdbPathCommand = new AsyncRelayCommand(SaveAdbPathAsync);
-
     }
 
     public Task InitializeAsync() => RefreshDevicesAsync();
@@ -50,6 +62,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     public ObservableCollection<NavigationItemViewModel> NavigationItems { get; }
 
     public ObservableCollection<QuestDevice> Devices { get; }
+
+    public ObservableCollection<QuestInstalledMap> InstalledMaps { get; }
+
+    public ObservableCollection<QuestInstalledPlaylist> InstalledPlaylists { get; }
+
+    public ObservableCollection<QuestScanWarning> ScanWarnings { get; }
 
     public AsyncRelayCommand RefreshDevicesCommand { get; }
 
@@ -71,6 +89,8 @@ public sealed class MainWindowViewModel : ViewModelBase
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentPageTitle));
             OnPropertyChanged(nameof(IsDashboard));
+            OnPropertyChanged(nameof(IsPlaylists));
+            OnPropertyChanged(nameof(IsLibrary));
             OnPropertyChanged(nameof(IsSettings));
             OnPropertyChanged(nameof(IsPlaceholderPage));
         }
@@ -79,17 +99,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public QuestDevice? SelectedDevice
     {
         get => _selectedDevice;
-        set
-        {
-            if (Equals(_selectedDevice, value))
-            {
-                return;
-            }
-
-            _selectedDevice = value;
-            OnPropertyChanged();
-            NotifyDeviceDetailsChanged();
-        }
+        set => SetSelectedDevice(value, startScan: true);
     }
 
     public string? ConfiguredAdbPath
@@ -112,9 +122,13 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool IsDashboard => CurrentPageTitle == "Dashboard";
 
+    public bool IsPlaylists => CurrentPageTitle == "Playlists";
+
+    public bool IsLibrary => CurrentPageTitle == "Library";
+
     public bool IsSettings => CurrentPageTitle == "Settings";
 
-    public bool IsPlaceholderPage => !IsDashboard && !IsSettings;
+    public bool IsPlaceholderPage => !IsDashboard && !IsPlaylists && !IsLibrary && !IsSettings;
 
     public bool IsRefreshing
     {
@@ -133,6 +147,21 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool IsEnvironmentScanning
+    {
+        get => _isEnvironmentScanning;
+        private set
+        {
+            if (_isEnvironmentScanning == value)
+            {
+                return;
+            }
+
+            _isEnvironmentScanning = value;
+            OnPropertyChanged();
+        }
+    }
+
     public bool HasDevices => Devices.Count > 0;
 
     public bool HasMultipleDevices => Devices.Count > 1;
@@ -142,6 +171,16 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool IsAdbUnavailable => _discoveryStatus == QuestDeviceDiscoveryStatus.AdbNotAvailable;
 
     public bool HasErrorMessage => !string.IsNullOrWhiteSpace(ErrorMessage);
+
+    public bool HasEnvironmentError => !string.IsNullOrWhiteSpace(EnvironmentError);
+
+    public bool HasInstalledMaps => InstalledMaps.Count > 0;
+
+    public bool HasInstalledPlaylists => InstalledPlaylists.Count > 0;
+
+    public bool HasScanWarnings => ScanWarnings.Count > 0;
+
+    public bool EnvironmentScanCompleted => _environmentScanCompleted;
 
     public string DeviceStatus
     {
@@ -167,6 +206,68 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public string BeatSaberStatus => !EnvironmentScanCompleted
+        ? "Beat Saber not scanned"
+        : BeatSaberDetected ? "Beat Saber detected" : "Beat Saber not detected";
+
+    public string SongCoreStatus => !EnvironmentScanCompleted
+        ? "SongCore not scanned"
+        : SongCoreDetected ? "SongCore detected" : "SongCore not detected";
+
+    public string PlaylistManagerStatus => !EnvironmentScanCompleted
+        ? "PlaylistManager not scanned"
+        : PlaylistManagerDetected
+            ? "PlaylistManager detected"
+            : "PlaylistManager not detected";
+
+    public bool BeatSaberDetected
+    {
+        get => _beatSaberDetected;
+        private set
+        {
+            if (_beatSaberDetected == value)
+            {
+                return;
+            }
+
+            _beatSaberDetected = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BeatSaberStatus));
+        }
+    }
+
+    public bool SongCoreDetected
+    {
+        get => _songCoreDetected;
+        private set
+        {
+            if (_songCoreDetected == value)
+            {
+                return;
+            }
+
+            _songCoreDetected = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SongCoreStatus));
+        }
+    }
+
+    public bool PlaylistManagerDetected
+    {
+        get => _playlistManagerDetected;
+        private set
+        {
+            if (_playlistManagerDetected == value)
+            {
+                return;
+            }
+
+            _playlistManagerDetected = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(PlaylistManagerStatus));
+        }
+    }
+
     public string? ErrorMessage
     {
         get => _errorMessage;
@@ -180,6 +281,22 @@ public sealed class MainWindowViewModel : ViewModelBase
             _errorMessage = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(HasErrorMessage));
+        }
+    }
+
+    public string? EnvironmentError
+    {
+        get => _environmentError;
+        private set
+        {
+            if (_environmentError == value)
+            {
+                return;
+            }
+
+            _environmentError = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasEnvironmentError));
         }
     }
 
@@ -213,9 +330,11 @@ public sealed class MainWindowViewModel : ViewModelBase
         ? "Unknown"
         : SelectedDevice.AndroidModel;
 
-    public int SongCount => 0;
+    public int SongCount => InstalledMaps.Count;
 
-    public int PlaylistCount => 0;
+    public int PlaylistCount => InstalledPlaylists.Count;
+
+    public int ScanWarningCount => ScanWarnings.Count;
 
     private async Task RefreshDevicesAsync()
     {
@@ -234,21 +353,100 @@ public sealed class MainWindowViewModel : ViewModelBase
                 Devices.Add(device);
             }
 
-            SelectedDevice = Devices.Count == 1 ? Devices[0] : null;
+            SetSelectedDevice(Devices.Count == 1 ? Devices[0] : null, startScan: false);
             NotifyDiscoveryChanged();
+            await RefreshEnvironmentAsync(SelectedDevice);
         }
         catch (Exception exception)
         {
             _discoveryStatus = QuestDeviceDiscoveryStatus.Error;
             ErrorMessage = exception.Message;
             Devices.Clear();
-            SelectedDevice = null;
+            SetSelectedDevice(null, startScan: false);
+            ApplyScanResult(QuestBeatSaberScanResult.Empty);
             NotifyDiscoveryChanged();
         }
         finally
         {
             IsRefreshing = false;
         }
+    }
+
+    private async Task RefreshEnvironmentAsync(QuestDevice? device)
+    {
+        _scanCancellationSource?.Cancel();
+        var cancellationSource = new CancellationTokenSource();
+        _scanCancellationSource = cancellationSource;
+
+        EnvironmentError = null;
+        SetEnvironmentScanCompleted(false);
+        ApplyScanResult(QuestBeatSaberScanResult.Empty);
+        if (device?.IsConnected != true)
+        {
+            return;
+        }
+
+        IsEnvironmentScanning = true;
+        try
+        {
+            var result = await _beatSaberScanner.ScanAsync(device, cancellationSource.Token);
+            if (!cancellationSource.IsCancellationRequested)
+            {
+                SetEnvironmentScanCompleted(true);
+                ApplyScanResult(result);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (!cancellationSource.IsCancellationRequested)
+            {
+                EnvironmentError = exception.Message;
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_scanCancellationSource, cancellationSource))
+            {
+                IsEnvironmentScanning = false;
+            }
+
+            cancellationSource.Dispose();
+        }
+    }
+
+    private void ApplyScanResult(QuestBeatSaberScanResult result)
+    {
+        BeatSaberDetected = result.BeatSaberDetected;
+        SongCoreDetected = result.SongCoreDetected;
+        PlaylistManagerDetected = result.PlaylistManagerDetected;
+
+        ReplaceContents(InstalledMaps, result.InstalledMaps);
+        ReplaceContents(InstalledPlaylists, result.InstalledPlaylists);
+        ReplaceContents(ScanWarnings, result.Warnings);
+
+        OnPropertyChanged(nameof(SongCount));
+        OnPropertyChanged(nameof(PlaylistCount));
+        OnPropertyChanged(nameof(ScanWarningCount));
+        OnPropertyChanged(nameof(HasInstalledMaps));
+        OnPropertyChanged(nameof(HasInstalledPlaylists));
+        OnPropertyChanged(nameof(HasScanWarnings));
+    }
+
+    private void SetEnvironmentScanCompleted(bool value)
+    {
+        if (_environmentScanCompleted == value)
+        {
+            return;
+        }
+
+        _environmentScanCompleted = value;
+        OnPropertyChanged(nameof(EnvironmentScanCompleted));
+        OnPropertyChanged(nameof(BeatSaberStatus));
+        OnPropertyChanged(nameof(SongCoreStatus));
+        OnPropertyChanged(nameof(PlaylistManagerStatus));
     }
 
     private async Task SaveAdbPathAsync()
@@ -265,6 +463,23 @@ public sealed class MainWindowViewModel : ViewModelBase
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             SettingsMessage = $"Could not save ADB path: {exception.Message}";
+        }
+    }
+
+    private void SetSelectedDevice(QuestDevice? value, bool startScan)
+    {
+        if (Equals(_selectedDevice, value))
+        {
+            return;
+        }
+
+        _selectedDevice = value;
+        OnPropertyChanged(nameof(SelectedDevice));
+        NotifyDeviceDetailsChanged();
+
+        if (startScan)
+        {
+            _ = RefreshEnvironmentAsync(value);
         }
     }
 
@@ -288,5 +503,14 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedTransport));
         OnPropertyChanged(nameof(SelectedModel));
         OnPropertyChanged(nameof(DeviceStatus));
+    }
+
+    private static void ReplaceContents<T>(ObservableCollection<T> collection, IEnumerable<T> items)
+    {
+        collection.Clear();
+        foreach (var item in items)
+        {
+            collection.Add(item);
+        }
     }
 }
