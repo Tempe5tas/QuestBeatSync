@@ -142,13 +142,18 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                     Warning: warning);
             }
 
+            var identity = TryGetIdentityFromFolderName(folderName);
+
             return new QuestInstalledMap(
                 folderPath,
                 folderName,
                 true,
                 metadata.SongTitle,
                 metadata.Mapper,
-                QuestMapIdentityStatus.LocalOnly);
+                identity is null
+                    ? QuestMapIdentityStatus.LocalOnly
+                    : QuestMapIdentityStatus.HashIdentified,
+                identity);
         }
         catch (QuestRemoteFileSystemException exception)
         {
@@ -261,6 +266,11 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             ? filename[..^bmbfSuffix.Length]
             : Path.GetFileNameWithoutExtension(filename);
     }
+
+    private static BeatMapIdentity? TryGetIdentityFromFolderName(string folderName) =>
+        folderName.Length == 40 && folderName.All(Uri.IsHexDigit)
+            ? new BeatMapIdentity(folderName)
+            : null;
 
     private static string GetRemoteName(string remotePath)
     {

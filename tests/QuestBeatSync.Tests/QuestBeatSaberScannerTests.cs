@@ -1,6 +1,7 @@
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Scanning;
 using QuestBeatSync.Tests.Fixtures;
+using QuestBeatSync.Core.Services;
 
 namespace QuestBeatSync.Tests;
 
@@ -39,8 +40,9 @@ public sealed class QuestBeatSaberScannerTests
             new[] { "第一首歌", "二曲目", "Third Song" },
             result.InstalledMaps.Select(map => map.SongTitle).ToArray());
         Assert.IsTrue(result.InstalledMaps.All(map => map.InfoDatExists));
-        Assert.IsTrue(result.InstalledMaps.All(map => map.IdentityStatus == QuestMapIdentityStatus.LocalOnly));
-        Assert.IsTrue(result.InstalledMaps.All(map => map.Identity is null));
+        Assert.AreEqual(2, result.InstalledMaps.Count(map => map.IdentityStatus == QuestMapIdentityStatus.LocalOnly));
+        var identified = result.InstalledMaps.Single(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified);
+        Assert.AreEqual("0123456789ABCDEF0123456789ABCDEF01234567", identified.Identity?.Hash);
     }
 
     [TestMethod]
@@ -69,6 +71,49 @@ public sealed class QuestBeatSaberScannerTests
         Assert.HasCount(1, result.InstalledMaps);
         var map = result.InstalledMaps[0];
         Assert.AreEqual("My Favorite Song (Custom)", map.FolderName);
+        Assert.AreEqual(QuestMapIdentityStatus.LocalOnly, map.IdentityStatus);
+        Assert.IsNull(map.Identity);
+    }
+
+    [TestMethod]
+    public async Task ScanAsync_ExactFortyHexFolderFlowsIntoPlannerAsKeepExisting()
+    {
+        const string hash = "0123456789ABCDEF0123456789ABCDEF01234567";
+        var fixture = CreateDetectedEnvironment();
+        AddMap(fixture, hash.ToLowerInvariant(), "Already Here", "Mapper");
+
+        var scan = await CreateScanner(fixture).ScanAsync(Device);
+        var installed = AssertSingle(scan.InstalledMaps);
+        Assert.AreEqual(QuestMapIdentityStatus.HashIdentified, installed.IdentityStatus);
+        Assert.AreEqual(hash, installed.Identity?.Hash);
+
+        var desired = new Playlist("Desired");
+        desired.Add(new PlaylistEntry("different-key", hash, "Already Here"));
+        var plan = SyncPlanner.Build(
+            [desired],
+            new QuestLibrary(installedMaps: scan.InstalledMaps),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, BeatSaverAvailability>(StringComparer.OrdinalIgnoreCase)
+            {
+                [hash] = BeatSaverAvailability.Online
+            });
+
+        Assert.AreEqual(1, plan.AlreadyInstalledCount);
+        Assert.AreEqual(0, plan.DownloadRequiredCount);
+        Assert.AreEqual(0, plan.UploadRequiredCount);
+        Assert.AreEqual(0, plan.QuestOnlyPreservedCount);
+        Assert.AreEqual(SyncOperationKind.KeepExisting, plan.Operations[0].Kind);
+    }
+
+    [TestMethod]
+    public async Task ScanAsync_FortyNonHexCharactersRemainLocalOnly()
+    {
+        var fixture = CreateDetectedEnvironment();
+        AddMap(fixture, "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", "Not a hash", "Mapper");
+
+        var result = await CreateScanner(fixture).ScanAsync(Device);
+
+        var map = AssertSingle(result.InstalledMaps);
         Assert.AreEqual(QuestMapIdentityStatus.LocalOnly, map.IdentityStatus);
         Assert.IsNull(map.Identity);
     }
@@ -144,4 +189,10 @@ public sealed class QuestBeatSaberScannerTests
 
     private static QuestBeatSaberScanner CreateScanner(FixtureQuestRemoteFileSystem fixture) =>
         new(fixture, QuestBeatSaberPaths.Default);
+
+    private static T AssertSingle<T>(IReadOnlyList<T> items)
+    {
+        Assert.HasCount(1, items);
+        return items[0];
+    }
 }
