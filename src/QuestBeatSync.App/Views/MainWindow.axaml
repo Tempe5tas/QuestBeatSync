@@ -3,6 +3,7 @@
     x:DataType="vm:MainWindowViewModel"
     xmlns="https://github.com/avaloniaui"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:core="using:QuestBeatSync.Core.Models"
     xmlns:vm="using:QuestBeatSync.App.ViewModels"
     Title="QuestBeatSync"
     Width="1000"
@@ -38,9 +39,67 @@
 
         <StackPanel IsVisible="{Binding IsDashboard}" Spacing="18">
           <Border Padding="20" CornerRadius="8" Background="#20242D">
-            <StackPanel Spacing="6">
-              <TextBlock FontSize="13" Foreground="#AAB1C0" Text="DEVICE" />
-              <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding DeviceStatus}" />
+            <StackPanel Spacing="14">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="6">
+                  <TextBlock FontSize="13" Foreground="#AAB1C0" Text="DEVICE" />
+                  <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding DeviceStatus}" />
+                </StackPanel>
+                <Button
+                    Grid.Column="1"
+                    VerticalAlignment="Center"
+                    Command="{Binding RefreshDevicesCommand}"
+                    Content="Refresh" />
+              </Grid>
+
+              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRefreshing}" />
+
+              <StackPanel IsVisible="{Binding HasDevices}" Spacing="8">
+                <TextBlock Foreground="#AAB1C0" Text="Device" />
+                <ComboBox
+                    HorizontalAlignment="Stretch"
+                    ItemsSource="{Binding Devices}"
+                    SelectedItem="{Binding SelectedDevice}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="core:QuestDevice">
+                      <Grid ColumnDefinitions="*,Auto" MinWidth="420">
+                        <TextBlock Text="{Binding Serial}" />
+                        <TextBlock Grid.Column="1" Margin="20,0,0,0" Foreground="#AAB1C0" Text="{Binding ConnectionState}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock
+                    IsVisible="{Binding HasMultipleDevices}"
+                    Foreground="#D7A95B"
+                    Text="Multiple devices detected. Select the device to use." />
+              </StackPanel>
+
+              <Grid
+                  IsVisible="{Binding HasSelectedDevice}"
+                  ColumnDefinitions="Auto,24,*"
+                  RowDefinitions="Auto,8,Auto,8,Auto,8,Auto">
+                <TextBlock Foreground="#AAB1C0" Text="Serial" />
+                <TextBlock Grid.Column="2" Text="{Binding SelectedSerial}" />
+                <TextBlock Grid.Row="2" Foreground="#AAB1C0" Text="State" />
+                <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding SelectedConnectionState}" />
+                <TextBlock Grid.Row="4" Foreground="#AAB1C0" Text="Transport" />
+                <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding SelectedTransport}" />
+                <TextBlock Grid.Row="6" Foreground="#AAB1C0" Text="Android model" />
+                <TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding SelectedModel}" />
+              </Grid>
+
+              <TextBlock
+                  IsVisible="{Binding HasErrorMessage}"
+                  Foreground="#E88A8A"
+                  Text="{Binding ErrorMessage}"
+                  TextWrapping="Wrap" />
+
+              <Button
+                  IsVisible="{Binding IsAdbUnavailable}"
+                  HorizontalAlignment="Left"
+                  Command="{Binding OpenSettingsCommand}"
+                  Content="Set ADB path" />
             </StackPanel>
           </Border>
 
@@ -60,8 +119,28 @@
           </Grid>
         </StackPanel>
 
+        <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">
+          <Border Padding="20" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="12">
+              <TextBlock FontSize="20" FontWeight="SemiBold" Text="ADB executable" />
+              <TextBlock
+                  Foreground="#AAB1C0"
+                  Text="Optional. QBSync searches this path first, then the app-data tools directory, then PATH."
+                  TextWrapping="Wrap" />
+              <TextBox
+                  Text="{Binding ConfiguredAdbPath}"
+                  Watermark="Path to adb or its containing directory" />
+              <Button
+                  HorizontalAlignment="Left"
+                  Command="{Binding SaveAdbPathCommand}"
+                  Content="Save and check devices" />
+              <TextBlock Foreground="#AAB1C0" Text="{Binding SettingsMessage}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
         <TextBlock
-            IsVisible="{Binding !IsDashboard}"
+            IsVisible="{Binding IsPlaceholderPage}"
             FontSize="16"
             Foreground="#8C94A5"
             Text="This section will be implemented in a later phase." />
@@ -69,4 +148,3 @@
     </ScrollViewer>
   </Grid>
 </Window>
-
