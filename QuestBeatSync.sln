@@ -1,0 +1,37 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuestBeatSync.App", "src\QuestBeatSync.App\QuestBeatSync.App.csproj", "{A2B6956B-C545-45B2-A029-1E6796308337}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuestBeatSync.Core", "src\QuestBeatSync.Core\QuestBeatSync.Core.csproj", "{A8BA7DCB-0CFE-49D9-99FC-C28754A90095}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuestBeatSync.Infrastructure", "src\QuestBeatSync.Infrastructure\QuestBeatSync.Infrastructure.csproj", "{E61E17F0-9698-4E98-924D-77E7FDE40207}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuestBeatSync.Tests", "tests\QuestBeatSync.Tests\QuestBeatSync.Tests.csproj", "{99AB4C24-D5F1-437D-9FB8-46343062F9C4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A2B6956B-C545-45B2-A029-1E6796308337}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A2B6956B-C545-45B2-A029-1E6796308337}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A2B6956B-C545-45B2-A029-1E6796308337}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A2B6956B-C545-45B2-A029-1E6796308337}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A8BA7DCB-0CFE-49D9-99FC-C28754A90095}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A8BA7DCB-0CFE-49D9-99FC-C28754A90095}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A8BA7DCB-0CFE-49D9-99FC-C28754A90095}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A8BA7DCB-0CFE-49D9-99FC-C28754A90095}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E61E17F0-9698-4E98-924D-77E7FDE40207}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E61E17F0-9698-4E98-924D-77E7FDE40207}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E61E17F0-9698-4E98-924D-77E7FDE40207}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E61E17F0-9698-4E98-924D-77E7FDE40207}.Release|Any CPU.Build.0 = Release|Any CPU
+		{99AB4C24-D5F1-437D-9FB8-46343062F9C4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{99AB4C24-D5F1-437D-9FB8-46343062F9C4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{99AB4C24-D5F1-437D-9FB8-46343062F9C4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{99AB4C24-D5F1-437D-9FB8-46343062F9C4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
+

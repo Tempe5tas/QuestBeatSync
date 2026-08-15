@@ -1,0 +1,72 @@
+<Window
+    x:Class="QuestBeatSync.App.Views.MainWindow"
+    x:DataType="vm:MainWindowViewModel"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:QuestBeatSync.App.ViewModels"
+    Title="QuestBeatSync"
+    Width="1000"
+    Height="680"
+    MinWidth="760"
+    MinHeight="500">
+  <Grid ColumnDefinitions="220,*">
+    <Border Background="#171A21" Padding="20,24">
+      <Grid RowDefinitions="Auto,24,*">
+        <StackPanel>
+          <TextBlock FontSize="23" FontWeight="SemiBold" Foreground="White" Text="QuestBeatSync" />
+          <TextBlock Margin="0,4,0,0" Foreground="#9BA3B4" Text="Quest library manager" />
+        </StackPanel>
+
+        <ListBox
+            Grid.Row="2"
+            ItemsSource="{Binding NavigationItems}"
+            SelectedItem="{Binding SelectedPage}"
+            Background="Transparent"
+            BorderThickness="0">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:NavigationItemViewModel">
+              <TextBlock Margin="12,10" FontSize="15" Foreground="White" Text="{Binding Title}" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Column="1">
+      <StackPanel Margin="40,36" Spacing="24">
+        <TextBlock FontSize="30" FontWeight="SemiBold" Text="{Binding CurrentPageTitle}" />
+
+        <StackPanel IsVisible="{Binding IsDashboard}" Spacing="18">
+          <Border Padding="20" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="6">
+              <TextBlock FontSize="13" Foreground="#AAB1C0" Text="DEVICE" />
+              <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding DeviceStatus}" />
+            </StackPanel>
+          </Border>
+
+          <Grid ColumnDefinitions="*,18,*">
+            <Border Padding="20" CornerRadius="8" Background="#20242D">
+              <StackPanel Spacing="6">
+                <TextBlock FontSize="13" Foreground="#AAB1C0" Text="LIBRARY" />
+                <TextBlock FontSize="24" FontWeight="SemiBold" Text="{Binding SongCount, StringFormat='{}{0} songs'}" />
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Padding="20" CornerRadius="8" Background="#20242D">
+              <StackPanel Spacing="6">
+                <TextBlock FontSize="13" Foreground="#AAB1C0" Text="PLAYLISTS" />
+                <TextBlock FontSize="24" FontWeight="SemiBold" Text="{Binding PlaylistCount, StringFormat='{}{0} playlists'}" />
+              </StackPanel>
+            </Border>
+          </Grid>
+        </StackPanel>
+
+        <TextBlock
+            IsVisible="{Binding !IsDashboard}"
+            FontSize="16"
+            Foreground="#8C94A5"
+            Text="This section will be implemented in a later phase." />
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>
+

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\QuestBeatSync.Core\QuestBeatSync.Core.csproj" />
+  </ItemGroup>
+</Project>
+
