@@ -3,7 +3,8 @@ namespace QuestBeatSync.Core.Models;
 public enum PlaylistEntryIdentityStatus
 {
     HashIdentified,
-    MissingHash
+    MissingHash,
+    InvalidHash
 }
 
 public sealed record PlaylistEntry
@@ -24,6 +25,12 @@ public sealed record PlaylistEntry
             return;
         }
 
+        if (!BeatSaverHash.IsValid(hash))
+        {
+            IdentityStatus = PlaylistEntryIdentityStatus.InvalidHash;
+            return;
+        }
+
         Identity = new BeatMapIdentity(hash, Key);
         IdentityStatus = PlaylistEntryIdentityStatus.HashIdentified;
     }
@@ -41,4 +48,3 @@ public sealed record PlaylistEntry
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
-

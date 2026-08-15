@@ -22,9 +22,4 @@ public interface IQuestTransport
         string remotePath,
         string localPath,
         CancellationToken cancellationToken = default);
-
-    Task<QuestLibrary> GetLibraryAsync(
-        QuestDevice device,
-        CancellationToken cancellationToken = default);
 }
-

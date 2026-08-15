@@ -191,13 +191,6 @@ public sealed class LocalBeatMapCache : IBeatMapCache
 
     private static string ValidateHash(string hash)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(hash);
-        var normalized = hash.Trim().ToUpperInvariant();
-        if (normalized.Length != 40 || normalized.Any(character => !Uri.IsHexDigit(character)))
-        {
-            throw new ArgumentException("BeatSaver hash must be a 40-character SHA1 value.", nameof(hash));
-        }
-
-        return normalized;
+        return BeatSaverHash.Normalize(hash);
     }
 }

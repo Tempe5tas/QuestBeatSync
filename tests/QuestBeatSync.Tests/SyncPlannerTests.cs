@@ -107,7 +107,7 @@ public sealed class SyncPlannerTests
         "duplicates" => OnlineScenario([PlaylistWith(Entry(HashA), Entry(HashA))]),
         "local-only-map" => new(
             [],
-            LibraryWith(Map(HashA, availability: BeatSaverAvailability.LocalOnly)),
+            LibraryWith(LocalMap("Local folder")),
             EmptySet(),
             EmptyAvailability()),
         "unavailable" => AvailabilityScenario(BeatSaverAvailability.Unavailable),
@@ -170,14 +170,23 @@ public sealed class SyncPlannerTests
     private static PlaylistEntry Entry(string hash, string? key = null, string? title = null) =>
         new(key, hash, title ?? hash);
 
-    private static BeatMap Map(
+    private static QuestInstalledMap Map(
         string hash,
         string? key = null,
-        string title = "Map",
-        BeatSaverAvailability availability = BeatSaverAvailability.Unknown) =>
-        new(new BeatMapIdentity(hash, key), title, Availability: availability);
+        string title = "Map") =>
+        new(
+            $"/custom/{hash}",
+            hash,
+            true,
+            title,
+            "Mapper",
+            QuestMapIdentityStatus.HashIdentified,
+            new BeatMapIdentity(hash, key));
 
-    private static QuestLibrary LibraryWith(params BeatMap[] maps) => new(maps);
+    private static QuestInstalledMap LocalMap(string folder) =>
+        new($"/custom/{folder}", folder, true, folder, "Mapper", QuestMapIdentityStatus.LocalOnly);
+
+    private static QuestLibrary LibraryWith(params QuestInstalledMap[] maps) => new(maps);
 
     private static HashSet<string> HashSet(params string[] hashes) =>
         new(hashes, StringComparer.OrdinalIgnoreCase);

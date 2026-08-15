@@ -33,7 +33,7 @@ public sealed class AdbQuestTransport : IQuestTransport
         var result = await _processRunner.RunAsync(
             executablePath,
             ["devices"],
-            _options.CommandTimeout,
+            _options.ShellCommandTimeout,
             cancellationToken).ConfigureAwait(false);
 
         if (result.TimedOut)
@@ -69,7 +69,11 @@ public sealed class AdbQuestTransport : IQuestTransport
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);
-        return RunDeviceCommandAsync(device, ["shell", .. arguments], cancellationToken);
+        return RunDeviceCommandAsync(
+            device,
+            ["shell", .. arguments],
+            _options.ShellCommandTimeout,
+            cancellationToken);
     }
 
     public Task<AdbCommandResult> PushAsync(
@@ -80,7 +84,11 @@ public sealed class AdbQuestTransport : IQuestTransport
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
-        return RunDeviceCommandAsync(device, ["push", localPath, remotePath], cancellationToken);
+        return RunDeviceCommandAsync(
+            device,
+            ["push", localPath, remotePath],
+            _options.FileTransferTimeout,
+            cancellationToken);
     }
 
     public Task<AdbCommandResult> PullAsync(
@@ -91,13 +99,12 @@ public sealed class AdbQuestTransport : IQuestTransport
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(remotePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
-        return RunDeviceCommandAsync(device, ["pull", remotePath, localPath], cancellationToken);
+        return RunDeviceCommandAsync(
+            device,
+            ["pull", remotePath, localPath],
+            _options.FileTransferTimeout,
+            cancellationToken);
     }
-
-    public Task<QuestLibrary> GetLibraryAsync(
-        QuestDevice device,
-        CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException("Beat Saber library scanning is not implemented in Phase 1.");
 
     private async Task<QuestDevice> TryReadModelAsync(
         QuestDevice device,
@@ -115,6 +122,7 @@ public sealed class AdbQuestTransport : IQuestTransport
     private async Task<AdbCommandResult> RunDeviceCommandAsync(
         QuestDevice device,
         IReadOnlyList<string> commandArguments,
+        TimeSpan timeout,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(device);
@@ -135,7 +143,7 @@ public sealed class AdbQuestTransport : IQuestTransport
         var result = await _processRunner.RunAsync(
             executablePath,
             arguments,
-            _options.CommandTimeout,
+            timeout,
             cancellationToken).ConfigureAwait(false);
 
         return new AdbCommandResult(

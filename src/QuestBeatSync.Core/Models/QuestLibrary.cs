@@ -3,18 +3,14 @@ namespace QuestBeatSync.Core.Models;
 public sealed class QuestLibrary
 {
     public QuestLibrary(
-        IEnumerable<BeatMap>? maps = null,
-        IEnumerable<Playlist>? playlists = null,
-        IEnumerable<QuestInstalledMap>? installedMaps = null)
+        IEnumerable<QuestInstalledMap>? installedMaps = null,
+        IEnumerable<QuestInstalledPlaylist>? installedPlaylists = null)
     {
-        Maps = (maps ?? []).ToArray();
-        Playlists = (playlists ?? []).ToArray();
         InstalledMaps = (installedMaps ?? []).ToArray();
+        InstalledPlaylists = (installedPlaylists ?? []).ToArray();
     }
 
-    public IReadOnlyList<BeatMap> Maps { get; }
-
-    public IReadOnlyList<Playlist> Playlists { get; }
-
     public IReadOnlyList<QuestInstalledMap> InstalledMaps { get; }
+
+    public IReadOnlyList<QuestInstalledPlaylist> InstalledPlaylists { get; }
 }

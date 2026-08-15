@@ -17,12 +17,12 @@ public static class SyncPlanner
 
         var playlists = desiredPlaylists.ToArray();
         var cachedHashes = locallyCachedHashes
-            .Where(hash => !string.IsNullOrWhiteSpace(hash))
-            .Select(NormalizeHash)
+            .Where(BeatSaverHash.IsValid)
+            .Select(BeatSaverHash.Normalize)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var availability = beatSaverAvailabilityByHash
-            .Where(pair => !string.IsNullOrWhiteSpace(pair.Key))
-            .GroupBy(pair => NormalizeHash(pair.Key), StringComparer.OrdinalIgnoreCase)
+            .Where(pair => BeatSaverHash.IsValid(pair.Key))
+            .GroupBy(pair => BeatSaverHash.Normalize(pair.Key), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(
                 group => group.Key,
                 group => ResolveAvailability(group.Select(pair => pair.Value)),
@@ -36,11 +36,11 @@ public static class SyncPlanner
         var requiredEntries = playlists
             .SelectMany(playlist => playlist.Entries)
             .Where(entry => entry.Hash is not null)
-            .GroupBy(entry => NormalizeHash(entry.Hash!), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(entry => entry.Hash!, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
         var requiredHashes = requiredEntries
-            .Select(entry => NormalizeHash(entry.Hash!))
+            .Select(entry => entry.Hash!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var plan = new SyncPlan(
             playlists.Sum(playlist => playlist.EntryCount),
@@ -133,11 +133,9 @@ public static class SyncPlanner
 
     private static IReadOnlyList<QuestMapReference> CollectQuestMaps(QuestLibrary library)
     {
-        var identified = library.Maps
-            .Select(map => new QuestMapReference(map.Identity, map.SongName))
-            .Concat(library.InstalledMaps
-                .Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null)
-                .Select(map => new QuestMapReference(map.Identity, map.SongTitle ?? map.FolderName)))
+        var identified = library.InstalledMaps
+            .Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null)
+            .Select(map => new QuestMapReference(map.Identity, map.SongTitle ?? map.FolderName))
             .GroupBy(map => map.Identity!.Hash, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First());
         var unidentified = library.InstalledMaps
@@ -148,8 +146,6 @@ public static class SyncPlanner
 
     private static string UnresolvedEntryKey(PlaylistEntry entry) =>
         entry.Key ?? entry.SongName ?? "<anonymous>";
-
-    private static string NormalizeHash(string hash) => hash.Trim().ToUpperInvariant();
 
     private static BeatSaverAvailability ResolveAvailability(IEnumerable<BeatSaverAvailability> values)
     {

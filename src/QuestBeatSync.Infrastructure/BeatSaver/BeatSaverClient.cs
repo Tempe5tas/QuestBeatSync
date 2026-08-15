@@ -27,7 +27,12 @@ public sealed class BeatSaverClient : IBeatSaverClient
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var requestedHash = Normalize(request.Hash);
+        if (request.Hash is not null && !BeatSaverHash.TryNormalize(request.Hash, out _))
+        {
+            return BeatSaverLookupResult.Unknown(request, "Playlist entry has an invalid exact hash.");
+        }
+
+        var requestedHash = request.Hash is null ? null : BeatSaverHash.Normalize(request.Hash);
         var requestedKey = Normalize(request.Key);
         if (requestedHash is null && requestedKey is null)
         {
@@ -185,7 +190,11 @@ public sealed class BeatSaverClient : IBeatSaverClient
                 continue;
             }
 
-            var versionHash = Normalize(GetString(version, "hash"));
+            if (!BeatSaverHash.TryNormalize(GetString(version, "hash"), out var versionHash))
+            {
+                continue;
+            }
+
             if (requestedHash is null || StringComparer.OrdinalIgnoreCase.Equals(versionHash, requestedHash))
             {
                 selectedVersion = version;
@@ -202,9 +211,9 @@ public sealed class BeatSaverClient : IBeatSaverClient
                 : BeatSaverLookupResult.Unknown(request, "BeatSaver map had no downloadable version.");
         }
 
-        var selectedHash = Normalize(GetString(selectedVersion.Value, "hash"));
+        var rawSelectedHash = GetString(selectedVersion.Value, "hash");
         var downloadUrl = GetString(selectedVersion.Value, "downloadURL");
-        if (selectedHash is null ||
+        if (!BeatSaverHash.TryNormalize(rawSelectedHash, out var selectedHash) ||
             !Uri.TryCreate(downloadUrl, UriKind.Absolute, out var downloadUri))
         {
             return BeatSaverLookupResult.Unknown(request, "BeatSaver version had no valid hash or download URL.");

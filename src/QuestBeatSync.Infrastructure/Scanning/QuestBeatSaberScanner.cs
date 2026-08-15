@@ -268,8 +268,8 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
     }
 
     private static BeatMapIdentity? TryGetIdentityFromFolderName(string folderName) =>
-        folderName.Length == 40 && folderName.All(Uri.IsHexDigit)
-            ? new BeatMapIdentity(folderName)
+        BeatSaverHash.TryNormalize(folderName, out var hash)
+            ? new BeatMapIdentity(hash)
             : null;
 
     private static string GetRemoteName(string remotePath)

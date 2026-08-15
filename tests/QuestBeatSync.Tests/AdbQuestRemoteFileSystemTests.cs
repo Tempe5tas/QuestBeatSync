@@ -84,9 +84,5 @@ public sealed class AdbQuestRemoteFileSystemTests
             CancellationToken cancellationToken = default) =>
             throw new AssertFailedException("The read-only filesystem must not call adb pull.");
 
-        public Task<QuestLibrary> GetLibraryAsync(
-            QuestDevice device,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
     }
 }

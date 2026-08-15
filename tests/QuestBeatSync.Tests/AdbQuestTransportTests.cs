@@ -58,9 +58,39 @@ public sealed class AdbQuestTransportTests
         {
             ConfiguredExecutablePath = executable,
             AppDataToolsDirectory = "unused",
-            CommandTimeout = TimeSpan.FromMilliseconds(50)
+            ShellCommandTimeout = TimeSpan.FromMilliseconds(50),
+            FileTransferTimeout = TimeSpan.FromMinutes(3)
         };
         return new AdbQuestTransport(options, resolver, processRunner);
+    }
+
+    [TestMethod]
+    public async Task PushAndPull_UseFileTransferTimeoutWhileShellUsesShortTimeout()
+    {
+        var runner = new RecordingProcessRunner();
+        var transport = CreateTransport(runner);
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+
+        await transport.ExecuteShellAsync(device, ["echo", "ok"]);
+        await transport.PushAsync(device, "map.zip", "/sdcard/map.zip");
+        await transport.PullAsync(device, "/sdcard/file", "file");
+
+        CollectionAssert.AreEqual(
+            new[] { TimeSpan.FromMilliseconds(50), TimeSpan.FromMinutes(3), TimeSpan.FromMinutes(3) },
+            runner.Timeouts.ToArray());
+    }
+
+    [TestMethod]
+    public async Task Push_ForwardsCallerCancellation()
+    {
+        var runner = new CancellationProcessRunner();
+        var transport = CreateTransport(runner);
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() =>
+            transport.PushAsync(device, "map.zip", "/sdcard/map.zip", cancellationSource.Token));
     }
 
     private sealed class StubProcessRunner(
@@ -76,6 +106,34 @@ public sealed class AdbQuestTransportTests
         {
             InvocationCount++;
             return Task.FromResult(resultFactory(executablePath, arguments));
+        }
+    }
+
+    private sealed class RecordingProcessRunner : IAdbProcessRunner
+    {
+        public List<TimeSpan> Timeouts { get; } = [];
+
+        public Task<AdbProcessResult> RunAsync(
+            string executablePath,
+            IReadOnlyList<string> arguments,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            Timeouts.Add(timeout);
+            return Task.FromResult(new AdbProcessResult(true, false, 0, string.Empty, string.Empty));
+        }
+    }
+
+    private sealed class CancellationProcessRunner : IAdbProcessRunner
+    {
+        public Task<AdbProcessResult> RunAsync(
+            string executablePath,
+            IReadOnlyList<string> arguments,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new AssertFailedException("A canceled transfer must not continue.");
         }
     }
 }

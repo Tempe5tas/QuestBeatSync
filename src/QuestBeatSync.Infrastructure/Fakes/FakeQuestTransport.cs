@@ -28,12 +28,4 @@ public sealed class FakeQuestTransport : IQuestTransport
         string localPath,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(new AdbCommandResult(true, false, 0, string.Empty, string.Empty));
-
-    public Task<QuestLibrary> GetLibraryAsync(
-        QuestDevice device,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        return Task.FromResult(new QuestLibrary());
-    }
 }

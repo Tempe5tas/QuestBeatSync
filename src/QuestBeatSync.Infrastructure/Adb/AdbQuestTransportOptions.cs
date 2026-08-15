@@ -6,5 +6,7 @@ public sealed class AdbQuestTransportOptions
 
     public required string AppDataToolsDirectory { get; init; }
 
-    public TimeSpan CommandTimeout { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan ShellCommandTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    public TimeSpan FileTransferTimeout { get; init; } = TimeSpan.FromMinutes(10);
 }

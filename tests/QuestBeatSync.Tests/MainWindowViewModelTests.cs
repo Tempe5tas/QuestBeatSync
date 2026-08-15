@@ -1,4 +1,4 @@
-using QuestBeatSync.App.ViewModels;
+﻿using QuestBeatSync.App.ViewModels;
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
@@ -31,9 +31,9 @@ public sealed class MainWindowViewModelTests
 
         await viewModel.InitializeAsync();
 
-        Assert.IsTrue(viewModel.HasMultipleDevices);
-        Assert.IsNull(viewModel.SelectedDevice);
-        Assert.AreEqual("Select a device", viewModel.DeviceStatus);
+        Assert.IsTrue(viewModel.Dashboard.HasMultipleDevices);
+        Assert.IsNull(viewModel.Dashboard.SelectedDevice);
+        Assert.AreEqual("Select a device", viewModel.Dashboard.DeviceStatus);
     }
 
     [TestMethod]
@@ -74,14 +74,14 @@ public sealed class MainWindowViewModelTests
 
         await viewModel.InitializeAsync();
 
-        Assert.AreEqual(device, viewModel.SelectedDevice);
-        Assert.AreEqual("Beat Saber detected", viewModel.BeatSaberStatus);
-        Assert.AreEqual("SongCore detected", viewModel.SongCoreStatus);
-        Assert.AreEqual("PlaylistManager detected", viewModel.PlaylistManagerStatus);
-        Assert.AreEqual(1, viewModel.SongCount);
-        Assert.AreEqual(1, viewModel.PlaylistCount);
-        Assert.HasCount(1, viewModel.InstalledMaps);
-        Assert.HasCount(1, viewModel.InstalledPlaylists);
+        Assert.AreEqual(device, viewModel.Dashboard.SelectedDevice);
+        Assert.AreEqual("Beat Saber detected", viewModel.Dashboard.BeatSaberStatus);
+        Assert.AreEqual("SongCore detected", viewModel.Dashboard.SongCoreStatus);
+        Assert.AreEqual("PlaylistManager detected", viewModel.Dashboard.PlaylistManagerStatus);
+        Assert.AreEqual(1, viewModel.Library.SongCount);
+        Assert.AreEqual(1, viewModel.Library.PlaylistCount);
+        Assert.HasCount(1, viewModel.Library.InstalledMaps);
+        Assert.HasCount(1, viewModel.Library.InstalledPlaylists);
     }
 
     [TestMethod]
@@ -111,15 +111,15 @@ public sealed class MainWindowViewModelTests
             options,
             settingsStore);
 
-        await viewModel.ImportPlaylistFilesAsync(["acg.bplist", "jpop.bplist", "broken.bplist"]);
+        await viewModel.Playlists.ImportAsync(["acg.bplist", "jpop.bplist", "broken.bplist"]);
 
-        Assert.HasCount(2, viewModel.ImportedPlaylists);
-        Assert.AreSame(first, viewModel.SelectedImportedPlaylist);
-        Assert.AreEqual("by Dana_Iclucia", viewModel.SelectedPlaylistAuthorDisplay);
-        Assert.AreEqual(5, viewModel.TotalPlaylistReferences);
-        Assert.AreEqual(2, viewModel.UniqueRequiredHashes);
-        Assert.AreEqual(2, viewModel.DuplicateReferences);
-        Assert.HasCount(1, viewModel.PlaylistImportErrors);
+        Assert.HasCount(2, viewModel.Playlists.ImportedPlaylists);
+        Assert.AreSame(first, viewModel.Playlists.SelectedPlaylist);
+        Assert.AreEqual("by Dana_Iclucia", viewModel.Playlists.SelectedAuthorDisplay);
+        Assert.AreEqual(5, viewModel.Playlists.TotalPlaylistReferences);
+        Assert.AreEqual(2, viewModel.Playlists.UniqueRequiredHashes);
+        Assert.AreEqual(2, viewModel.Playlists.DuplicateReferences);
+        Assert.HasCount(1, viewModel.Playlists.ImportErrors);
     }
 
     [TestMethod]
@@ -131,11 +131,11 @@ public sealed class MainWindowViewModelTests
         var viewModel = CreateViewModel(new StubQuestTransport([first]), scanner);
 
         await viewModel.InitializeAsync();
-        viewModel.SelectedDevice = second;
+        viewModel.Dashboard.SelectedDevice = second;
         await scanner.SecondCall.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.AreEqual(2, scanner.CallCount);
-        Assert.AreEqual(second, viewModel.SelectedDevice);
+        Assert.AreEqual(second, viewModel.Dashboard.SelectedDevice);
     }
 
     [TestMethod]
@@ -146,17 +146,17 @@ public sealed class MainWindowViewModelTests
         var scanner = new OverlappingBeatSaberScanner();
         var viewModel = CreateViewModel(new StubQuestTransport([]), scanner);
 
-        viewModel.SelectedDevice = first;
+        viewModel.Dashboard.SelectedDevice = first;
         await scanner.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        viewModel.SelectedDevice = second;
+        viewModel.Dashboard.SelectedDevice = second;
         await Task.WhenAll(
             scanner.FirstCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             scanner.SecondCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2)));
 
-        Assert.AreEqual(second, viewModel.SelectedDevice);
-        Assert.IsTrue(viewModel.EnvironmentScanCompleted);
-        Assert.AreEqual("Beat Saber detected", viewModel.BeatSaberStatus);
-        Assert.IsFalse(viewModel.IsEnvironmentScanning);
+        Assert.AreEqual(second, viewModel.Dashboard.SelectedDevice);
+        Assert.IsTrue(viewModel.Library.ScanCompleted);
+        Assert.AreEqual("Beat Saber detected", viewModel.Dashboard.BeatSaberStatus);
+        Assert.IsFalse(viewModel.Dashboard.IsEnvironmentScanning);
     }
 
     [TestMethod]
@@ -176,9 +176,9 @@ public sealed class MainWindowViewModelTests
             options,
             settingsStore);
         await viewModel.InitializeAsync();
-        await viewModel.ImportPlaylistFilesAsync(["desired.bplist"]);
+        await viewModel.Playlists.ImportAsync(["desired.bplist"]);
 
-        await viewModel.BuildSyncPlanCommand.ExecuteAsync();
+        await viewModel.Sync.BuildCommand.ExecuteAsync();
 
         Assert.IsTrue(viewModel.HasOperationError);
         StringAssert.Contains(viewModel.OperationErrorText!, "Build Sync Plan");
@@ -214,22 +214,22 @@ public sealed class MainWindowViewModelTests
             options,
             settingsStore);
         await viewModel.InitializeAsync();
-        await viewModel.ImportPlaylistFilesAsync(["acg.bplist", "rock.bplist"]);
+        await viewModel.Playlists.ImportAsync(["acg.bplist", "rock.bplist"]);
 
-        await viewModel.BuildSyncPlanCommand.ExecuteAsync();
+        await viewModel.Sync.BuildCommand.ExecuteAsync();
 
         CollectionAssert.AreEquivalent(new[] { hashA, hashB }, beatSaver.RequestedHashes.ToArray());
         Assert.HasCount(2, beatSaver.RequestedHashes);
-        Assert.AreEqual(2, viewModel.SyncDownloadRequired);
-        Assert.AreEqual(2, viewModel.SyncUploadRequired);
-        Assert.AreEqual(0, viewModel.SyncUnknown);
-        Assert.AreEqual(2, viewModel.SyncUniqueMaps);
-        StringAssert.Contains(viewModel.SyncResolutionMessage!, "Resolved 2 unique maps");
-        Assert.IsTrue(viewModel.SelectedPlaylistEntries.All(item =>
+        Assert.AreEqual(2, viewModel.Sync.DownloadRequired);
+        Assert.AreEqual(2, viewModel.Sync.UploadRequired);
+        Assert.AreEqual(0, viewModel.Sync.Unknown);
+        Assert.AreEqual(2, viewModel.Sync.UniqueMaps);
+        StringAssert.Contains(viewModel.Sync.ResolutionMessage!, "Resolved 2 unique maps");
+        Assert.IsTrue(viewModel.Playlists.SelectedEntries.All(item =>
             item.Availability == BeatSaverAvailability.Online));
 
-        viewModel.SelectedImportedPlaylist = second;
-        Assert.IsTrue(viewModel.SelectedPlaylistEntries.All(item =>
+        viewModel.Playlists.SelectedPlaylist = second;
+        Assert.IsTrue(viewModel.Playlists.SelectedEntries.All(item =>
             item.Availability == BeatSaverAvailability.Online));
     }
 
@@ -399,9 +399,5 @@ public sealed class MainWindowViewModelTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public Task<QuestLibrary> GetLibraryAsync(
-            QuestDevice device,
-            CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
     }
 }

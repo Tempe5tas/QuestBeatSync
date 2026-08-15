@@ -8,8 +8,8 @@ public sealed class CoreModelTests
     [TestMethod]
     public void BeatMapIdentity_Equality_UsesHashInsteadOfMapKey()
     {
-        var first = new BeatMapIdentity("abcdef1234", "1a2b");
-        var second = new BeatMapIdentity("ABCDEF1234", "different-key");
+        var first = new BeatMapIdentity("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1a2b");
+        var second = new BeatMapIdentity("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "different-key");
 
         Assert.AreEqual(first, second);
         Assert.AreEqual(first.GetHashCode(), second.GetHashCode());
@@ -19,10 +19,21 @@ public sealed class CoreModelTests
     public void Playlist_CanStoreMultipleMaps()
     {
         var playlist = new Playlist("Workout");
-        playlist.Add(new PlaylistEntry(new BeatMapIdentity("HASH-ONE"), "First song"));
-        playlist.Add(new PlaylistEntry(new BeatMapIdentity("HASH-TWO"), "Second song"));
+        playlist.Add(new PlaylistEntry(new BeatMapIdentity("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), "First song"));
+        playlist.Add(new PlaylistEntry(new BeatMapIdentity("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"), "Second song"));
 
         Assert.HasCount(2, playlist.Entries);
+    }
+
+    [TestMethod]
+    public void BeatMapIdentity_RejectsMalformedHash()
+    {
+        Assert.ThrowsExactly<ArgumentException>(() => new BeatMapIdentity("not-a-sha1"));
+
+        var entry = new PlaylistEntry("key", "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", "Invalid");
+        Assert.AreEqual(PlaylistEntryIdentityStatus.InvalidHash, entry.IdentityStatus);
+        Assert.IsNull(entry.Identity);
+        Assert.IsNull(entry.Hash);
     }
 
     [TestMethod]

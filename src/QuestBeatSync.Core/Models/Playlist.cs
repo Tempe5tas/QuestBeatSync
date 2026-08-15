@@ -47,7 +47,7 @@ public sealed class Playlist
         _entries.Count(entry => entry.Hash is not null) - UniqueHashCount;
 
     public int MissingHashCount =>
-        _entries.Count(entry => entry.IdentityStatus == PlaylistEntryIdentityStatus.MissingHash);
+        _entries.Count(entry => entry.IdentityStatus != PlaylistEntryIdentityStatus.HashIdentified);
 
     public void Add(PlaylistEntry entry)
     {

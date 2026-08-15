@@ -70,7 +70,7 @@ public sealed partial class MainWindow : Window
 
     private Task ImportFilesAsync(IEnumerable<string> filePaths) =>
         DataContext is MainWindowViewModel viewModel
-            ? viewModel.ImportPlaylistFilesAsync(filePaths)
+            ? viewModel.Playlists.ImportAsync(filePaths)
             : Task.CompletedTask;
 
     private void ReportError(string operation, Exception exception)

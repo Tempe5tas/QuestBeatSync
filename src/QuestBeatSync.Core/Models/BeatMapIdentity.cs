@@ -4,8 +4,7 @@ public sealed class BeatMapIdentity : IEquatable<BeatMapIdentity>
 {
     public BeatMapIdentity(string hash, string? mapKey = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(hash);
-        Hash = hash.Trim().ToUpperInvariant();
+        Hash = BeatSaverHash.Normalize(hash);
         MapKey = string.IsNullOrWhiteSpace(mapKey) ? null : mapKey.Trim();
     }
 
@@ -27,4 +26,3 @@ public sealed class BeatMapIdentity : IEquatable<BeatMapIdentity>
 
     public override string ToString() => Hash;
 }
-

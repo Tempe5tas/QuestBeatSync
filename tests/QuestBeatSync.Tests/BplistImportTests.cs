@@ -86,6 +86,19 @@ public sealed class BplistImportTests
         }
     }
 
+    [TestMethod]
+    public void Parser_RetainsMalformedHashAsUnidentifiedEntry()
+    {
+        var playlist = BplistParser.Parse(
+            """{"playlistTitle":"Invalid","songs":[{"key":"1a2b","hash":"not-a-sha1","songName":"Unsafe"}]}""");
+
+        Assert.HasCount(1, playlist.Entries);
+        var entry = playlist.Entries[0];
+        Assert.AreEqual(PlaylistEntryIdentityStatus.InvalidHash, entry.IdentityStatus);
+        Assert.IsNull(entry.Identity);
+        Assert.IsNull(entry.Hash);
+    }
+
     private static PlaylistImportResult AssertSingle(IReadOnlyList<PlaylistImportResult> results)
     {
         Assert.HasCount(1, results);
