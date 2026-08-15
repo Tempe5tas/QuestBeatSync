@@ -3,6 +3,7 @@ using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
 using QuestBeatSync.Infrastructure.Importing;
+using QuestBeatSync.Core.Services;
 
 namespace QuestBeatSync.App.ViewModels;
 
@@ -33,6 +34,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _environmentScanCompleted;
     private bool _isImportingPlaylists;
     private bool _isCheckingBeatSaver;
+    private bool _isBuildingSyncPlan;
+    private SyncPlan? _syncPlan;
     private readonly Dictionary<Playlist, IReadOnlyList<PlaylistEntryStatusViewModel>> _playlistEntryStatuses = [];
 
     public MainWindowViewModel(
@@ -58,6 +61,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             new("Dashboard"),
             new("Playlists"),
             new("Library"),
+            new("Sync"),
             new("Backup"),
             new("Settings")
         };
@@ -68,6 +72,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         SelectedPlaylistEntries = [];
         PlaylistImportErrors = [];
         ScanWarnings = [];
+        SyncOperations = [];
         _selectedPage = NavigationItems[0];
 
         RefreshDevicesCommand = new AsyncRelayCommand(RefreshDevicesAsync, () => !IsRefreshing);
@@ -75,6 +80,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         SaveAdbPathCommand = new AsyncRelayCommand(SaveAdbPathAsync);
         CheckBeatSaverCommand = new AsyncRelayCommand(CheckBeatSaverAsync, () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver);
         CacheAvailableMapsCommand = new AsyncRelayCommand(CacheAvailableMapsAsync, () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver);
+        BuildSyncPlanCommand = new AsyncRelayCommand(BuildSyncPlanAsync, () => CanBuildSyncPlan && !IsBuildingSyncPlan);
     }
 
     public Task InitializeAsync() => RefreshDevicesAsync();
@@ -95,6 +101,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<QuestScanWarning> ScanWarnings { get; }
 
+    public ObservableCollection<SyncOperation> SyncOperations { get; }
+
     public AsyncRelayCommand RefreshDevicesCommand { get; }
 
     public RelayCommand OpenSettingsCommand { get; }
@@ -104,6 +112,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand CheckBeatSaverCommand { get; }
 
     public AsyncRelayCommand CacheAvailableMapsCommand { get; }
+
+    public AsyncRelayCommand BuildSyncPlanCommand { get; }
 
     public NavigationItemViewModel? SelectedPage
     {
@@ -121,6 +131,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(IsDashboard));
             OnPropertyChanged(nameof(IsPlaylists));
             OnPropertyChanged(nameof(IsLibrary));
+            OnPropertyChanged(nameof(IsSync));
             OnPropertyChanged(nameof(IsSettings));
             OnPropertyChanged(nameof(IsPlaceholderPage));
         }
@@ -181,9 +192,11 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public bool IsLibrary => CurrentPageTitle == "Library";
 
+    public bool IsSync => CurrentPageTitle == "Sync";
+
     public bool IsSettings => CurrentPageTitle == "Settings";
 
-    public bool IsPlaceholderPage => !IsDashboard && !IsPlaylists && !IsLibrary && !IsSettings;
+    public bool IsPlaceholderPage => !IsDashboard && !IsPlaylists && !IsLibrary && !IsSync && !IsSettings;
 
     public bool IsRefreshing
     {
@@ -249,6 +262,22 @@ public sealed class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool IsBuildingSyncPlan
+    {
+        get => _isBuildingSyncPlan;
+        private set
+        {
+            if (_isBuildingSyncPlan == value)
+            {
+                return;
+            }
+
+            _isBuildingSyncPlan = value;
+            OnPropertyChanged();
+            BuildSyncPlanCommand.RaiseCanExecuteChanged();
+        }
+    }
+
     public bool HasDevices => Devices.Count > 0;
 
     public bool HasMultipleDevices => Devices.Count > 1;
@@ -276,6 +305,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     public string PlaylistImportErrorText => string.Join(Environment.NewLine, PlaylistImportErrors);
 
     public bool EnvironmentScanCompleted => _environmentScanCompleted;
+
+    public bool CanBuildSyncPlan => EnvironmentScanCompleted;
 
     public string DeviceStatus
     {
@@ -437,6 +468,51 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public int DuplicateReferences => _localPlaylistState.DuplicateReferences;
 
+    public bool HasSyncPlan => SyncPlan is not null;
+
+    public SyncPlan? SyncPlan
+    {
+        get => _syncPlan;
+        private set
+        {
+            if (ReferenceEquals(_syncPlan, value))
+            {
+                return;
+            }
+
+            _syncPlan = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasSyncPlan));
+            OnPropertyChanged(nameof(SyncPlaylistReferences));
+            OnPropertyChanged(nameof(SyncUniqueMaps));
+            OnPropertyChanged(nameof(SyncAlreadyInstalled));
+            OnPropertyChanged(nameof(SyncDownloadRequired));
+            OnPropertyChanged(nameof(SyncUploadRequired));
+            OnPropertyChanged(nameof(SyncUnavailable));
+            OnPropertyChanged(nameof(SyncUnknown));
+            OnPropertyChanged(nameof(SyncQuestOnlyPreserved));
+            OnPropertyChanged(nameof(SyncDeletionCount));
+        }
+    }
+
+    public int SyncPlaylistReferences => SyncPlan?.PlaylistReferenceCount ?? 0;
+
+    public int SyncUniqueMaps => SyncPlan?.UniqueMapCount ?? 0;
+
+    public int SyncAlreadyInstalled => SyncPlan?.AlreadyInstalledCount ?? 0;
+
+    public int SyncDownloadRequired => SyncPlan?.DownloadRequiredCount ?? 0;
+
+    public int SyncUploadRequired => SyncPlan?.UploadRequiredCount ?? 0;
+
+    public int SyncUnavailable => SyncPlan?.UnavailableCount ?? 0;
+
+    public int SyncUnknown => SyncPlan?.UnknownCount ?? 0;
+
+    public int SyncQuestOnlyPreserved => SyncPlan?.QuestOnlyPreservedCount ?? 0;
+
+    public int SyncDeletionCount => 0;
+
     public string SelectedPlaylistAuthorDisplay => string.IsNullOrWhiteSpace(SelectedImportedPlaylist?.Author)
         ? "by Unknown author"
         : $"by {SelectedImportedPlaylist.Author}";
@@ -488,6 +564,7 @@ public sealed class MainWindowViewModel : ViewModelBase
             }
 
             NotifyLocalPlaylistStateChanged();
+            InvalidateSyncPlan();
         }
         catch (Exception exception)
         {
@@ -598,6 +675,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasInstalledPlaylists));
         OnPropertyChanged(nameof(HasScanWarnings));
         UpdateInstalledStatuses();
+        InvalidateSyncPlan();
     }
 
     private async Task CheckBeatSaverAsync()
@@ -628,6 +706,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         finally
         {
             IsCheckingBeatSaver = false;
+            InvalidateSyncPlan();
         }
     }
 
@@ -654,7 +733,68 @@ public sealed class MainWindowViewModel : ViewModelBase
         finally
         {
             IsCheckingBeatSaver = false;
+            InvalidateSyncPlan();
         }
+    }
+
+    private async Task BuildSyncPlanAsync()
+    {
+        IsBuildingSyncPlan = true;
+        try
+        {
+            var requiredHashes = ImportedPlaylists
+                .SelectMany(playlist => playlist.Entries)
+                .Where(entry => entry.Hash is not null)
+                .Select(entry => entry.Hash!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var cachedHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var hash in requiredHashes)
+            {
+                if (await _beatMapCache.IsCachedAsync(hash))
+                {
+                    cachedHashes.Add(hash);
+                }
+            }
+
+            var availability = _playlistEntryStatuses.Values
+                .SelectMany(statuses => statuses)
+                .Where(item => item.Hash is not null)
+                .GroupBy(item => item.Hash!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => ResolveConservativeAvailability(group.Select(item => item.Availability)),
+                    StringComparer.OrdinalIgnoreCase);
+            var library = new QuestLibrary(installedMaps: InstalledMaps);
+            var plan = SyncPlanner.Build(ImportedPlaylists, library, cachedHashes, availability);
+
+            ReplaceContents(SyncOperations, plan.Operations);
+            SyncPlan = plan;
+        }
+        finally
+        {
+            IsBuildingSyncPlan = false;
+        }
+    }
+
+    private void InvalidateSyncPlan()
+    {
+        SyncPlan = null;
+        SyncOperations.Clear();
+    }
+
+    private static BeatSaverAvailability ResolveConservativeAvailability(
+        IEnumerable<BeatSaverAvailability> values)
+    {
+        var availability = values.ToArray();
+        if (availability.Contains(BeatSaverAvailability.Online))
+        {
+            return BeatSaverAvailability.Online;
+        }
+
+        return availability.All(value => value == BeatSaverAvailability.Unavailable)
+            ? BeatSaverAvailability.Unavailable
+            : BeatSaverAvailability.Unknown;
     }
 
     private async Task RefreshLocalAndQuestStatusAsync(IEnumerable<PlaylistEntryStatusViewModel> statuses)
@@ -701,6 +841,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(BeatSaberStatus));
         OnPropertyChanged(nameof(SongCoreStatus));
         OnPropertyChanged(nameof(PlaylistManagerStatus));
+        OnPropertyChanged(nameof(CanBuildSyncPlan));
+        BuildSyncPlanCommand.RaiseCanExecuteChanged();
     }
 
     private async Task SaveAdbPathAsync()

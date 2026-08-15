@@ -309,6 +309,129 @@
           </Border>
         </StackPanel>
 
+        <StackPanel IsVisible="{Binding IsSync}" Spacing="18">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="4">
+              <TextBlock FontSize="20" FontWeight="SemiBold" Text="Sync preview" />
+              <TextBlock Foreground="#AAB1C0" Text="Generate and inspect a plan. Nothing is executed in this phase." />
+            </StackPanel>
+            <Button
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Command="{Binding BuildSyncPlanCommand}"
+                Content="Generate Sync Plan" />
+          </Grid>
+
+          <Border Padding="16" CornerRadius="8" Background="#31281D" BorderBrush="#D7A95B" BorderThickness="1">
+            <TextBlock
+                FontSize="16"
+                FontWeight="SemiBold"
+                Foreground="#F0C979"
+                Text="QBSync never deletes existing maps during normal sync." />
+          </Border>
+
+          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBuildingSyncPlan}" />
+          <TextBlock
+              IsVisible="{Binding !CanBuildSyncPlan}"
+              Foreground="#D7A95B"
+              Text="A completed Quest library scan is required before generating a trustworthy plan." />
+          <TextBlock
+              IsVisible="{Binding !HasSyncPlan}"
+              Foreground="#8C94A5"
+              Text="No plan generated yet. Import desired playlists, inspect availability, then generate a preview." />
+
+          <StackPanel IsVisible="{Binding HasSyncPlan}" Spacing="14">
+            <Grid ColumnDefinitions="*,10,*,10,*,10,*">
+              <Border Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="PLAYLIST REFERENCES" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncPlaylistReferences}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="UNIQUE MAPS" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncUniqueMaps}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="4" Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="ALREADY INSTALLED" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncAlreadyInstalled}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="6" Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="DOWNLOAD REQUIRED" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncDownloadRequired}" />
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <Grid ColumnDefinitions="*,10,*,10,*,10,*">
+              <Border Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="UPLOAD REQUIRED" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncUploadRequired}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="UNAVAILABLE" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncUnavailable}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="4" Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="UNKNOWN" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncUnknown}" />
+                </StackPanel>
+              </Border>
+              <Border Grid.Column="6" Padding="12" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="3">
+                  <TextBlock Foreground="#AAB1C0" Text="QUEST-ONLY PRESERVED" />
+                  <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding SyncQuestOnlyPreserved}" />
+                </StackPanel>
+              </Border>
+            </Grid>
+
+            <Border Padding="14" CornerRadius="8" BorderBrush="#5B9364" BorderThickness="1">
+              <TextBlock
+                  FontSize="18"
+                  FontWeight="SemiBold"
+                  Foreground="#83C98E"
+                  Text="{Binding SyncDeletionCount, StringFormat='{}Deletion: {0}'}" />
+            </Border>
+
+            <Expander Header="Operations" IsExpanded="True">
+              <Border Margin="0,10,0,0" Padding="14" CornerRadius="8" Background="#20242D">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="1.2*,2*,4*" ColumnSpacing="16">
+                    <TextBlock FontWeight="SemiBold" Text="Operation" />
+                    <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Hash / playlist" />
+                    <TextBlock Grid.Column="2" FontWeight="SemiBold" Text="Details" />
+                  </Grid>
+                  <Border Height="1" Background="#3A404D" />
+                  <ItemsControl ItemsSource="{Binding SyncOperations}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="core:SyncOperation">
+                        <Grid Margin="0,6" ColumnDefinitions="1.2*,2*,4*" ColumnSpacing="16">
+                          <TextBlock Text="{Binding Kind}" />
+                          <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding MapIdentity.Hash}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Foreground="#AAB1C0" Text="{Binding PlaylistName}" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <TextBlock Grid.Column="2" Text="{Binding Description}" TextWrapping="Wrap" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </Expander>
+          </StackPanel>
+        </StackPanel>
+
         <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">
           <Border Padding="20" CornerRadius="8" Background="#20242D">
             <StackPanel Spacing="12">

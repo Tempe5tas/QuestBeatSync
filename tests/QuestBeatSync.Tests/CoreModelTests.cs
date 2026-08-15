@@ -29,8 +29,8 @@ public sealed class CoreModelTests
     public void SyncPlan_ReportsOperationCount()
     {
         var plan = new SyncPlan();
-        plan.Add(new SyncOperation(SyncOperationKind.CopyMapToQuest, "Copy first map"));
-        plan.Add(new SyncOperation(SyncOperationKind.BackupPlaylist, "Back up playlist"));
+        plan.Add(new SyncOperation(SyncOperationKind.UploadMap, "Copy first map"));
+        plan.Add(new SyncOperation(SyncOperationKind.ImportPlaylist, "Import playlist"));
 
         Assert.AreEqual(2, plan.OperationCount);
     }
