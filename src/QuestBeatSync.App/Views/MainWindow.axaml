@@ -241,23 +241,34 @@
                   <TextBlock Text="{Binding SelectedPlaylistUniqueHashCount, StringFormat='{}{0} unique hashes'}" />
                   <TextBlock Text="{Binding SelectedPlaylistDuplicateReferenceCount, StringFormat='{}{0} duplicate references'}" />
                 </StackPanel>
+                <StackPanel Margin="0,10,0,0" Orientation="Horizontal" Spacing="10">
+                  <Button Command="{Binding CheckBeatSaverCommand}" Content="Check BeatSaver" />
+                  <Button Command="{Binding CacheAvailableMapsCommand}" Content="Cache available maps" />
+                  <ProgressBar Width="130" IsIndeterminate="True" IsVisible="{Binding IsCheckingBeatSaver}" />
+                </StackPanel>
               </StackPanel>
 
-              <Grid ColumnDefinitions="1.2*,2*,2*,1.2*" ColumnSpacing="16">
+              <Grid ColumnDefinitions="1*,1.8*,1.6*,1.1*,1.1*,1.1*,1.1*" ColumnSpacing="12">
                 <TextBlock FontWeight="SemiBold" Text="Key" />
                 <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Hash" />
                 <TextBlock Grid.Column="2" FontWeight="SemiBold" Text="Song name" />
                 <TextBlock Grid.Column="3" FontWeight="SemiBold" Text="Identity" />
+                <TextBlock Grid.Column="4" FontWeight="SemiBold" Text="Installed on Quest" />
+                <TextBlock Grid.Column="5" FontWeight="SemiBold" Text="Cached locally" />
+                <TextBlock Grid.Column="6" FontWeight="SemiBold" Text="Availability" />
               </Grid>
               <Border Height="1" Background="#3A404D" />
-              <ItemsControl ItemsSource="{Binding SelectedImportedPlaylist.Entries}">
+              <ItemsControl ItemsSource="{Binding SelectedPlaylistEntries}">
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="core:PlaylistEntry">
-                    <Grid Margin="0,7" ColumnDefinitions="1.2*,2*,2*,1.2*" ColumnSpacing="16">
+                  <DataTemplate x:DataType="vm:PlaylistEntryStatusViewModel">
+                    <Grid Margin="0,7" ColumnDefinitions="1*,1.8*,1.6*,1.1*,1.1*,1.1*,1.1*" ColumnSpacing="12" ToolTip.Tip="{Binding StatusMessage}">
                       <TextBlock Text="{Binding Key}" TextTrimming="CharacterEllipsis" />
                       <TextBlock Grid.Column="1" Text="{Binding Hash}" TextTrimming="CharacterEllipsis" />
                       <TextBlock Grid.Column="2" Text="{Binding SongName}" TextTrimming="CharacterEllipsis" />
                       <TextBlock Grid.Column="3" Text="{Binding IdentityStatus}" />
+                      <TextBlock Grid.Column="4" Text="{Binding InstalledOnQuest}" />
+                      <TextBlock Grid.Column="5" Text="{Binding CachedLocally}" />
+                      <TextBlock Grid.Column="6" Text="{Binding AvailabilityDisplay}" />
                     </Grid>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>

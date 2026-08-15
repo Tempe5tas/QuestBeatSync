@@ -5,12 +5,17 @@ namespace QuestBeatSync.Infrastructure.Fakes;
 
 public sealed class FakeBeatSaverClient : IBeatSaverClient
 {
-    public Task<BeatSaverAvailability> GetAvailabilityAsync(
-        BeatMapIdentity identity,
+    public Task<BeatSaverLookupResult> LookupAsync(
+        BeatSaverLookupRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(identity);
-        return Task.FromResult(BeatSaverAvailability.Unknown);
+        ArgumentNullException.ThrowIfNull(request);
+        return Task.FromResult(BeatSaverLookupResult.Unknown(request, "Fake BeatSaver client."));
     }
-}
 
+    public Task DownloadZipAsync(
+        Uri downloadUri,
+        Stream destination,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("The fake BeatSaver client does not download maps.");
+}

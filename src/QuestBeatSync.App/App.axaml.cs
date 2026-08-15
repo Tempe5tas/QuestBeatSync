@@ -7,6 +7,8 @@ using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Adb;
 using QuestBeatSync.Infrastructure.Importing;
 using QuestBeatSync.Infrastructure.Scanning;
+using QuestBeatSync.Infrastructure.BeatSaver;
+using QuestBeatSync.Infrastructure.Cache;
 
 namespace QuestBeatSync.App;
 
@@ -31,11 +33,17 @@ public sealed partial class App : Application
             var scanner = new QuestBeatSaberScanner(
                 new AdbQuestRemoteFileSystem(transport),
                 QuestBeatSaberPaths.Default);
+            var beatSaverClient = new BeatSaverClient(new HttpClient());
+            var beatMapCache = new LocalBeatMapCache(
+                Path.Combine(appDataDirectory, "cache", "maps"),
+                beatSaverClient);
 
             var viewModel = new MainWindowViewModel(
                 transport,
                 scanner,
                 new LocalBplistImporter(),
+                beatSaverClient,
+                beatMapCache,
                 transportOptions,
                 settingsStore);
             desktop.MainWindow = new MainWindow

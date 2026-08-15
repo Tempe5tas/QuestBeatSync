@@ -4,8 +4,13 @@ namespace QuestBeatSync.Infrastructure.Abstractions;
 
 public interface IBeatSaverClient
 {
-    Task<BeatSaverAvailability> GetAvailabilityAsync(
-        BeatMapIdentity identity,
+    Task<BeatSaverLookupResult> LookupAsync(
+        BeatSaverLookupRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task DownloadZipAsync(
+        Uri downloadUri,
+        Stream destination,
         CancellationToken cancellationToken = default);
 }
 

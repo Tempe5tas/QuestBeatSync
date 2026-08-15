@@ -3,6 +3,7 @@ using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
 using QuestBeatSync.Infrastructure.Importing;
+using QuestBeatSync.Infrastructure.Fakes;
 
 namespace QuestBeatSync.Tests;
 
@@ -23,6 +24,8 @@ public sealed class MainWindowViewModelTests
             new StubQuestTransport(devices),
             new StubBeatSaberScanner(),
             new StubPlaylistImporter(),
+            new FakeBeatSaverClient(),
+            new FakeBeatMapCache(),
             options,
             settingsStore);
 
@@ -64,6 +67,8 @@ public sealed class MainWindowViewModelTests
             new StubQuestTransport([device]),
             new StubBeatSaberScanner(scanResult),
             new StubPlaylistImporter(),
+            new FakeBeatSaverClient(),
+            new FakeBeatMapCache(),
             options,
             settingsStore);
 
@@ -101,6 +106,8 @@ public sealed class MainWindowViewModelTests
             new StubQuestTransport([]),
             new StubBeatSaberScanner(),
             new StubPlaylistImporter(importResults),
+            new FakeBeatSaverClient(),
+            new FakeBeatMapCache(),
             options,
             settingsStore);
 

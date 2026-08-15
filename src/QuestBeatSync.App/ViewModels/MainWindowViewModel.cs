@@ -11,6 +11,8 @@ public sealed class MainWindowViewModel : ViewModelBase
     private readonly IQuestTransport _questTransport;
     private readonly IQuestBeatSaberScanner _beatSaberScanner;
     private readonly ILocalPlaylistImporter _playlistImporter;
+    private readonly IBeatSaverClient _beatSaverClient;
+    private readonly IBeatMapCache _beatMapCache;
     private readonly AdbQuestTransportOptions _adbOptions;
     private readonly AdbSettingsStore _settingsStore;
     private LocalPlaylistLibraryState _localPlaylistState = new([]);
@@ -30,17 +32,23 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _playlistManagerDetected;
     private bool _environmentScanCompleted;
     private bool _isImportingPlaylists;
+    private bool _isCheckingBeatSaver;
+    private readonly Dictionary<Playlist, IReadOnlyList<PlaylistEntryStatusViewModel>> _playlistEntryStatuses = [];
 
     public MainWindowViewModel(
         IQuestTransport questTransport,
         IQuestBeatSaberScanner beatSaberScanner,
         ILocalPlaylistImporter playlistImporter,
+        IBeatSaverClient beatSaverClient,
+        IBeatMapCache beatMapCache,
         AdbQuestTransportOptions adbOptions,
         AdbSettingsStore settingsStore)
     {
         _questTransport = questTransport ?? throw new ArgumentNullException(nameof(questTransport));
         _beatSaberScanner = beatSaberScanner ?? throw new ArgumentNullException(nameof(beatSaberScanner));
         _playlistImporter = playlistImporter ?? throw new ArgumentNullException(nameof(playlistImporter));
+        _beatSaverClient = beatSaverClient ?? throw new ArgumentNullException(nameof(beatSaverClient));
+        _beatMapCache = beatMapCache ?? throw new ArgumentNullException(nameof(beatMapCache));
         _adbOptions = adbOptions ?? throw new ArgumentNullException(nameof(adbOptions));
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _configuredAdbPath = adbOptions.ConfiguredExecutablePath;
@@ -57,6 +65,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         InstalledMaps = [];
         InstalledPlaylists = [];
         ImportedPlaylists = [];
+        SelectedPlaylistEntries = [];
         PlaylistImportErrors = [];
         ScanWarnings = [];
         _selectedPage = NavigationItems[0];
@@ -64,6 +73,8 @@ public sealed class MainWindowViewModel : ViewModelBase
         RefreshDevicesCommand = new AsyncRelayCommand(RefreshDevicesAsync, () => !IsRefreshing);
         OpenSettingsCommand = new RelayCommand(OpenSettings);
         SaveAdbPathCommand = new AsyncRelayCommand(SaveAdbPathAsync);
+        CheckBeatSaverCommand = new AsyncRelayCommand(CheckBeatSaverAsync, () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver);
+        CacheAvailableMapsCommand = new AsyncRelayCommand(CacheAvailableMapsAsync, () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver);
     }
 
     public Task InitializeAsync() => RefreshDevicesAsync();
@@ -78,6 +89,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<Playlist> ImportedPlaylists { get; }
 
+    public ObservableCollection<PlaylistEntryStatusViewModel> SelectedPlaylistEntries { get; }
+
     public ObservableCollection<string> PlaylistImportErrors { get; }
 
     public ObservableCollection<QuestScanWarning> ScanWarnings { get; }
@@ -87,6 +100,10 @@ public sealed class MainWindowViewModel : ViewModelBase
     public RelayCommand OpenSettingsCommand { get; }
 
     public AsyncRelayCommand SaveAdbPathCommand { get; }
+
+    public AsyncRelayCommand CheckBeatSaverCommand { get; }
+
+    public AsyncRelayCommand CacheAvailableMapsCommand { get; }
 
     public NavigationItemViewModel? SelectedPage
     {
@@ -132,6 +149,11 @@ public sealed class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(SelectedPlaylistEntryCount));
             OnPropertyChanged(nameof(SelectedPlaylistUniqueHashCount));
             OnPropertyChanged(nameof(SelectedPlaylistDuplicateReferenceCount));
+            ReplaceContents(
+                SelectedPlaylistEntries,
+                value is not null && _playlistEntryStatuses.TryGetValue(value, out var statuses) ? statuses : []);
+            CheckBeatSaverCommand.RaiseCanExecuteChanged();
+            CacheAvailableMapsCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -207,6 +229,23 @@ public sealed class MainWindowViewModel : ViewModelBase
 
             _isImportingPlaylists = value;
             OnPropertyChanged();
+        }
+    }
+
+    public bool IsCheckingBeatSaver
+    {
+        get => _isCheckingBeatSaver;
+        private set
+        {
+            if (_isCheckingBeatSaver == value)
+            {
+                return;
+            }
+
+            _isCheckingBeatSaver = value;
+            OnPropertyChanged();
+            CheckBeatSaverCommand.RaiseCanExecuteChanged();
+            CacheAvailableMapsCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -428,6 +467,11 @@ public sealed class MainWindowViewModel : ViewModelBase
                 {
                     firstImported ??= result.Playlist;
                     ImportedPlaylists.Add(result.Playlist!);
+                    var statuses = result.Playlist!.Entries
+                        .Select(entry => new PlaylistEntryStatusViewModel(entry))
+                        .ToArray();
+                    _playlistEntryStatuses[result.Playlist] = statuses;
+                    await RefreshLocalAndQuestStatusAsync(statuses);
                 }
                 else
                 {
@@ -553,6 +597,96 @@ public sealed class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasInstalledMaps));
         OnPropertyChanged(nameof(HasInstalledPlaylists));
         OnPropertyChanged(nameof(HasScanWarnings));
+        UpdateInstalledStatuses();
+    }
+
+    private async Task CheckBeatSaverAsync()
+    {
+        IsCheckingBeatSaver = true;
+        try
+        {
+            var results = new Dictionary<string, BeatSaverLookupResult>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in SelectedPlaylistEntries)
+            {
+                var request = BeatSaverLookupRequest.FromEntry(item.Entry);
+                var lookupKey = request.Hash is not null ? $"hash:{request.Hash}" : $"key:{request.Key}";
+                if (!results.TryGetValue(lookupKey, out var result))
+                {
+                    result = await _beatSaverClient.LookupAsync(request);
+                    results[lookupKey] = result;
+                }
+
+                item.LookupResult = result;
+                item.Availability = result.Availability;
+                item.StatusMessage = result.Message;
+                if (result.ResolvedHash is not null)
+                {
+                    item.CachedLocally = await _beatMapCache.IsCachedAsync(result.ResolvedHash) ? "Yes" : "No";
+                }
+            }
+        }
+        finally
+        {
+            IsCheckingBeatSaver = false;
+        }
+    }
+
+    private async Task CacheAvailableMapsAsync()
+    {
+        IsCheckingBeatSaver = true;
+        try
+        {
+            foreach (var item in SelectedPlaylistEntries)
+            {
+                if (item.LookupResult?.CanDownload != true)
+                {
+                    continue;
+                }
+
+                var cacheResult = await _beatMapCache.CacheAsync(item.LookupResult);
+                item.CachedLocally = cacheResult.IsSuccess ? "Yes" : "No";
+                if (!cacheResult.IsSuccess)
+                {
+                    item.StatusMessage = cacheResult.ErrorMessage;
+                }
+            }
+        }
+        finally
+        {
+            IsCheckingBeatSaver = false;
+        }
+    }
+
+    private async Task RefreshLocalAndQuestStatusAsync(IEnumerable<PlaylistEntryStatusViewModel> statuses)
+    {
+        foreach (var item in statuses)
+        {
+            item.CachedLocally = item.Hash is null
+                ? "Unknown"
+                : await _beatMapCache.IsCachedAsync(item.Hash) ? "Yes" : "No";
+        }
+
+        UpdateInstalledStatuses();
+    }
+
+    private void UpdateInstalledStatuses()
+    {
+        var knownHashes = InstalledMaps
+            .Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null)
+            .Select(map => map.Identity!.Hash)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var canProveAbsence = EnvironmentScanCompleted && InstalledMaps.All(map =>
+            map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null);
+
+        foreach (var statuses in _playlistEntryStatuses.Values)
+        {
+            foreach (var item in statuses)
+            {
+                item.InstalledOnQuest = item.Hash is null
+                    ? "Unknown"
+                    : knownHashes.Contains(item.Hash) ? "Yes" : canProveAbsence ? "No" : "Unknown";
+            }
+        }
     }
 
     private void SetEnvironmentScanCompleted(bool value)
