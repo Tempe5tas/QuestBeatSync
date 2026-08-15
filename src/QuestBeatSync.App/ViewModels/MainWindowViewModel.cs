@@ -37,6 +37,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     private bool _isCheckingBeatSaver;
     private bool _isBuildingSyncPlan;
     private SyncPlan? _syncPlan;
+    private OperationError? _operationError;
     private readonly Dictionary<Playlist, IReadOnlyList<PlaylistEntryStatusViewModel>> _playlistEntryStatuses = [];
 
     public MainWindowViewModel(
@@ -76,12 +77,27 @@ public sealed class MainWindowViewModel : ViewModelBase
         SyncOperations = [];
         _selectedPage = NavigationItems[0];
 
-        RefreshDevicesCommand = new AsyncRelayCommand(RefreshDevicesAsync, () => !IsRefreshing);
+        RefreshDevicesCommand = new AsyncRelayCommand(
+            RefreshDevicesAsync,
+            () => !IsRefreshing,
+            exception => ReportOperationErrorAsync("Refresh devices", exception));
         OpenSettingsCommand = new RelayCommand(OpenSettings);
-        SaveAdbPathCommand = new AsyncRelayCommand(SaveAdbPathAsync);
-        CheckBeatSaverCommand = new AsyncRelayCommand(CheckBeatSaverAsync, () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver);
-        CacheAvailableMapsCommand = new AsyncRelayCommand(CacheAvailableMapsAsync, () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver);
-        BuildSyncPlanCommand = new AsyncRelayCommand(BuildSyncPlanAsync, () => CanBuildSyncPlan && !IsBuildingSyncPlan);
+        DismissOperationErrorCommand = new RelayCommand(() => OperationError = null);
+        SaveAdbPathCommand = new AsyncRelayCommand(
+            SaveAdbPathAsync,
+            errorHandler: exception => ReportOperationErrorAsync("Save ADB settings", exception));
+        CheckBeatSaverCommand = new AsyncRelayCommand(
+            CheckBeatSaverAsync,
+            () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver,
+            exception => ReportOperationErrorAsync("Check BeatSaver", exception));
+        CacheAvailableMapsCommand = new AsyncRelayCommand(
+            CacheAvailableMapsAsync,
+            () => HasSelectedImportedPlaylist && !IsCheckingBeatSaver,
+            exception => ReportOperationErrorAsync("Cache maps", exception));
+        BuildSyncPlanCommand = new AsyncRelayCommand(
+            BuildSyncPlanAsync,
+            () => CanBuildSyncPlan && !IsBuildingSyncPlan,
+            exception => ReportOperationErrorAsync("Generate Sync Plan", exception));
     }
 
     public Task InitializeAsync() => RefreshDevicesAsync();
@@ -108,6 +124,8 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     public RelayCommand OpenSettingsCommand { get; }
 
+    public RelayCommand DismissOperationErrorCommand { get; }
+
     public AsyncRelayCommand SaveAdbPathCommand { get; }
 
     public AsyncRelayCommand CheckBeatSaverCommand { get; }
@@ -115,6 +133,29 @@ public sealed class MainWindowViewModel : ViewModelBase
     public AsyncRelayCommand CacheAvailableMapsCommand { get; }
 
     public AsyncRelayCommand BuildSyncPlanCommand { get; }
+
+    public OperationError? OperationError
+    {
+        get => _operationError;
+        private set
+        {
+            if (Equals(_operationError, value))
+            {
+                return;
+            }
+
+            _operationError = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasOperationError));
+            OnPropertyChanged(nameof(OperationErrorText));
+        }
+    }
+
+    public bool HasOperationError => OperationError is not null;
+
+    public string? OperationErrorText => OperationError is null
+        ? null
+        : $"{OperationError.Operation}: {OperationError.Message}";
 
     public NavigationItemViewModel? SelectedPage
     {
@@ -915,6 +956,19 @@ public sealed class MainWindowViewModel : ViewModelBase
 
     private void OpenSettings() =>
         SelectedPage = NavigationItems.First(item => item.Title == "Settings");
+
+    private Task ReportOperationErrorAsync(string operation, Exception exception)
+    {
+        ReportOperationError(operation, exception);
+        return Task.CompletedTask;
+    }
+
+    public void ReportOperationError(string operation, Exception exception)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+        ArgumentNullException.ThrowIfNull(exception);
+        OperationError = new OperationError(operation, exception.Message);
+    }
 
     private void NotifyDiscoveryChanged()
     {

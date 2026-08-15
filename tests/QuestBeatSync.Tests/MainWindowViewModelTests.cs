@@ -159,6 +159,34 @@ public sealed class MainWindowViewModelTests
         Assert.IsFalse(viewModel.IsEnvironmentScanning);
     }
 
+    [TestMethod]
+    public async Task AsyncCommandFailure_IsPublishedThroughUnifiedOperationError()
+    {
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var playlist = new Playlist("Desired");
+        playlist.Add(new PlaylistEntry("key", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "Song"));
+        var options = new AdbQuestTransportOptions { AppDataToolsDirectory = "unused" };
+        var settingsStore = new AdbSettingsStore(Path.Combine(Path.GetTempPath(), "qbsync-unused-settings.json"));
+        var viewModel = new MainWindowViewModel(
+            new StubQuestTransport([device]),
+            new StubBeatSaberScanner(),
+            new StubPlaylistImporter([new PlaylistImportResult("desired.bplist", playlist, null)]),
+            new FakeBeatSaverClient(),
+            new FailOnSecondCacheCheck(),
+            options,
+            settingsStore);
+        await viewModel.InitializeAsync();
+        await viewModel.ImportPlaylistFilesAsync(["desired.bplist"]);
+
+        await viewModel.BuildSyncPlanCommand.ExecuteAsync();
+
+        Assert.IsTrue(viewModel.HasOperationError);
+        StringAssert.Contains(viewModel.OperationErrorText!, "Generate Sync Plan");
+        StringAssert.Contains(viewModel.OperationErrorText!, "cache read failed");
+        viewModel.DismissOperationErrorCommand.Execute(null);
+        Assert.IsFalse(viewModel.HasOperationError);
+    }
+
     private static MainWindowViewModel CreateViewModel(
         IQuestTransport transport,
         IQuestBeatSaberScanner scanner)
@@ -238,6 +266,21 @@ public sealed class MainWindowViewModelTests
                 [],
                 []);
         }
+    }
+
+    private sealed class FailOnSecondCacheCheck : IBeatMapCache
+    {
+        private int _checkCount;
+
+        public Task<bool> IsCachedAsync(string hash, CancellationToken cancellationToken = default) =>
+            Interlocked.Increment(ref _checkCount) == 1
+                ? Task.FromResult(false)
+                : throw new IOException("cache read failed");
+
+        public Task<BeatMapCacheResult> CacheAsync(
+            BeatSaverLookupResult lookup,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 
     private sealed class StubBeatSaberScanner(

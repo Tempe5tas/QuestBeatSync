@@ -13,20 +13,30 @@ public sealed partial class MainWindow : Window
 
     private async void ImportPlaylist_Click(object? sender, RoutedEventArgs e)
     {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        try
         {
-            Title = "Import BeatSaver playlists",
-            AllowMultiple = true,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("BeatSaver playlist")
-                {
-                    Patterns = ["*.bplist"]
-                }
-            ]
-        });
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Import BeatSaver playlists",
+                AllowMultiple = true,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("BeatSaver playlist")
+                    {
+                        Patterns = ["*.bplist"]
+                    }
+                ]
+            });
 
-        await ImportFilesAsync(files.Select(file => file.Path.LocalPath));
+            await ImportFilesAsync(files.Select(file => file.Path.LocalPath));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            ReportError("Import playlist", exception);
+        }
     }
 
     private void OnDragOver(object? sender, DragEventArgs e)
@@ -39,12 +49,22 @@ public sealed partial class MainWindow : Window
 
     private async void OnDrop(object? sender, DragEventArgs e)
     {
-        var files = e.DataTransfer.TryGetFiles();
-        e.Handled = true;
-
-        if (files is not null)
+        try
         {
-            await ImportFilesAsync(files.Select(file => file.Path.LocalPath));
+            var files = e.DataTransfer.TryGetFiles();
+            e.Handled = true;
+
+            if (files is not null)
+            {
+                await ImportFilesAsync(files.Select(file => file.Path.LocalPath));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            ReportError("Import dropped playlist", exception);
         }
     }
 
@@ -52,4 +72,12 @@ public sealed partial class MainWindow : Window
         DataContext is MainWindowViewModel viewModel
             ? viewModel.ImportPlaylistFilesAsync(filePaths)
             : Task.CompletedTask;
+
+    private void ReportError(string operation, Exception exception)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.ReportOperationError(operation, exception);
+        }
+    }
 }

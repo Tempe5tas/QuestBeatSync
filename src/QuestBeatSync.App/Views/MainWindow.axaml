@@ -40,6 +40,26 @@
       <StackPanel Margin="40,36" Spacing="24">
         <TextBlock FontSize="30" FontWeight="SemiBold" Text="{Binding CurrentPageTitle}" />
 
+        <Border
+            IsVisible="{Binding HasOperationError}"
+            Padding="14"
+            CornerRadius="8"
+            Background="#3A2024"
+            BorderBrush="#E88A8A"
+            BorderThickness="1">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="3">
+              <TextBlock FontWeight="SemiBold" Foreground="#F2A0A0" Text="Operation failed" />
+              <TextBlock Foreground="#F4C1C1" Text="{Binding OperationErrorText}" TextWrapping="Wrap" />
+            </StackPanel>
+            <Button
+                Grid.Column="1"
+                VerticalAlignment="Center"
+                Command="{Binding DismissOperationErrorCommand}"
+                Content="Dismiss" />
+          </Grid>
+        </Border>
+
         <StackPanel IsVisible="{Binding IsDashboard}" Spacing="18">
           <Border Padding="20" CornerRadius="8" Background="#20242D">
             <StackPanel Spacing="14">
