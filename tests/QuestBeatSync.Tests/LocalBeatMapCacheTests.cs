@@ -64,6 +64,21 @@ public sealed class LocalBeatMapCacheTests
         Assert.IsFalse(Directory.Exists(Path.Combine(_testRoot, Hash)));
     }
 
+    [TestMethod]
+    public async Task SyncMapSourceProvider_RequiresExactMatchingLookupAndReturnsCompletedCache()
+    {
+        var cache = CreateCache(CreateZip(("Info.dat", "{}"), ("song.ogg", "audio")));
+        var identity = new BeatMapIdentity(Hash);
+
+        var path = await cache.DownloadExactMapAsync(identity, OnlineLookup());
+
+        Assert.AreEqual(Path.Combine(_testRoot, Hash), path);
+        Assert.AreEqual(path, await cache.GetCachedMapDirectoryAsync(identity));
+
+        var mismatch = OnlineLookup() with { ResolvedHash = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => cache.DownloadExactMapAsync(identity, mismatch));
+    }
+
     private LocalBeatMapCache CreateCache(byte[] archive) =>
         new(_testRoot, new DownloadStub(archive));
 

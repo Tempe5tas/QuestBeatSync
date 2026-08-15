@@ -9,6 +9,7 @@ using QuestBeatSync.Infrastructure.Importing;
 using QuestBeatSync.Infrastructure.Scanning;
 using QuestBeatSync.Infrastructure.BeatSaver;
 using QuestBeatSync.Infrastructure.Cache;
+using QuestBeatSync.Infrastructure.Execution;
 
 namespace QuestBeatSync.App;
 
@@ -37,6 +38,13 @@ public sealed partial class App : Application
             var beatMapCache = new LocalBeatMapCache(
                 Path.Combine(appDataDirectory, "cache", "maps"),
                 beatSaverClient);
+            var syncExecutor = new SyncExecutor(
+                scanner,
+                new LocalPlaylistExecutionWorkspace(Path.Combine(appDataDirectory, "executions")),
+                beatMapCache,
+                new AdbQuestSyncTarget(transport, QuestBeatSaberPaths.Default),
+                new JsonSyncExecutionJournal(Path.Combine(appDataDirectory, "execution-journal")),
+                QuestBeatSaberPaths.Default);
 
             var viewModel = new MainWindowViewModel(
                 transport,
@@ -45,7 +53,8 @@ public sealed partial class App : Application
                 beatSaverClient,
                 beatMapCache,
                 transportOptions,
-                settingsStore);
+                settingsStore,
+                syncExecutor);
             desktop.MainWindow = new MainWindow
             {
                 DataContext = viewModel

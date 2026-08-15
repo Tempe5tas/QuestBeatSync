@@ -163,6 +163,55 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
+    public async Task FinalAppearingAfterStaging_IsPreservedWithoutPromotion()
+    {
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)));
+        fixture.Target.FinalAppearsOnSecondCheck = true;
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncOperationStatus.Skipped, result.Operations[0].Status);
+        Assert.AreEqual(0, fixture.Target.PromoteCount);
+    }
+
+    [TestMethod]
+    public async Task FailedStagedStructureVerification_NeverPromotesFinal()
+    {
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)));
+        fixture.Target.StructureVerified = false;
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncOperationStatus.Failed, result.Operations[0].Status);
+        Assert.AreEqual(0, fixture.Target.PromoteCount);
+    }
+
+    [TestMethod]
+    public async Task PromotionFailure_IsReportedWithoutRollbackOrDelete()
+    {
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)));
+        fixture.Target.FailPromotion = true;
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.CompletedWithFailures, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Failed, result.Operations[0].Status);
+        Assert.AreEqual(0, fixture.Target.PromoteCount);
+    }
+
+    [TestMethod]
+    public async Task ForceStopRefusal_PreventsAllQuestWrites()
+    {
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)));
+        fixture.Target.WritePreparation = QuestWritePreparationResult.Refused("force-stop failed");
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Refused, result.Status);
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+    }
+
+    [TestMethod]
     public async Task CanceledStagingUpload_NeverPromotesFinalDirectory()
     {
         using var cancellation = new CancellationTokenSource();
@@ -221,6 +270,44 @@ public sealed class Phase6AExecutionContractTests
         CollectionAssert.AreEqual(
             new[] { SyncOperationStatus.Failed, SyncOperationStatus.Succeeded },
             fixture.Journal.Entries[^1].Operations.Select(operation => operation.Status).ToArray());
+    }
+
+    [TestMethod]
+    public async Task PlaylistTransferFailure_DoesNotRewriteSuccessfulMapResult()
+    {
+        var path = Path.Combine(_temporaryRoot, "playlist-failure.bplist");
+        await File.WriteAllTextAsync(path, "approved");
+        var source = new PlaylistSourceIdentity(path, await Sha256Async(path));
+        var fixture = CreateFixture(EmptyScan(), Plan(
+            Operation(SyncOperationKind.UploadMap, HashA),
+            new SyncOperation(SyncOperationKind.ImportPlaylist, "Import", PlaylistName: "Playlist", PlaylistSource: source)));
+        fixture.Target.FailPlaylistImport = true;
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.CompletedWithFailures, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.AreEqual(SyncOperationStatus.Failed, result.Operations[1].Status);
+        Assert.IsTrue(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashA}"));
+    }
+
+    [TestMethod]
+    public async Task CancelAfterCompletedMap_PreservesSucceededResultWithoutRollback()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var fixture = CreateFixture(EmptyScan(), Plan(
+            Operation(SyncOperationKind.UploadMap, HashA),
+            Operation(SyncOperationKind.UploadMap, HashB)));
+        fixture.Target.CancelUploadUsing = cancellation;
+        fixture.Target.CancelUploadContaining = HashB;
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device(), cancellation.Token);
+
+        Assert.AreEqual(SyncRunStatus.Canceled, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.AreEqual(SyncOperationStatus.Canceled, result.Operations[1].Status);
+        Assert.IsTrue(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashA}"));
+        Assert.IsFalse(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashB}"));
     }
 
     [TestMethod]
@@ -306,7 +393,8 @@ public sealed class Phase6AExecutionContractTests
         {
             "IQuestTransport.cs",
             "AdbQuestTransport.cs",
-            "FakeQuestTransport.cs"
+            "FakeQuestTransport.cs",
+            "AdbQuestSyncTarget.cs"
         };
         var offenders = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
             .Where(path => File.ReadAllText(path).Contains("PushAsync(", StringComparison.Ordinal))
@@ -442,22 +530,40 @@ public sealed class Phase6AExecutionContractTests
         public int ImportCount { get; private set; }
         public int MutationCount => CreateStagingCount + PromoteCount + ImportCount;
         public CancellationTokenSource? CancelUploadUsing { get; set; }
+        public string? CancelUploadContaining { get; set; }
         public string? FailUploadContaining { get; set; }
+        public bool FailPlaylistImport { get; set; }
         public IReadOnlySet<string> LastExcludedFiles { get; private set; } = new HashSet<string>();
         public List<string> ImportedPlaylistContents { get; } = [];
+        public QuestWritePreparationResult WritePreparation { get; set; } = QuestWritePreparationResult.Ready;
+        public bool FinalAppearsOnSecondCheck { get; set; }
+        public bool StructureVerified { get; set; } = true;
+        public bool FailPromotion { get; set; }
+        private int _finalDirectoryChecks;
 
-        public Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default) => Task.FromResult(Directories.Contains(remotePath));
+        public IReadOnlyList<string> DrainDiagnosticWarnings() => [];
+
+        public Task<QuestWritePreparationResult> PrepareForWritesAsync(QuestDevice device, CancellationToken cancellationToken = default) =>
+            Task.FromResult(WritePreparation);
+
+        public Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default)
+        {
+            var isFinal = BeatSaverHash.IsValid(remotePath[(remotePath.LastIndexOf('/') + 1)..]);
+            if (FinalAppearsOnSecondCheck && isFinal && ++_finalDirectoryChecks >= 2) return Task.FromResult(true);
+            return Task.FromResult(Directories.Contains(remotePath));
+        }
         public Task CreateStagingDirectoryAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default) { CreateStagingCount++; Directories.Add(stagingPath); return Task.CompletedTask; }
         public Task UploadMapDirectoryAsync(QuestDevice device, string localMapDirectory, string stagingPath, IReadOnlySet<string> excludedFileNames, CancellationToken cancellationToken = default)
         {
             LastExcludedFiles = excludedFileNames;
             if (FailUploadContaining is not null && stagingPath.Contains(FailUploadContaining, StringComparison.Ordinal)) throw new IOException("Fixture upload failure.");
-            if (CancelUploadUsing is not null) { CancelUploadUsing.Cancel(); throw new OperationCanceledException(cancellationToken); }
+            if (CancelUploadUsing is not null && (CancelUploadContaining is null || stagingPath.Contains(CancelUploadContaining, StringComparison.Ordinal))) { CancelUploadUsing.Cancel(); throw new OperationCanceledException(cancellationToken); }
             return Task.CompletedTask;
         }
-        public Task<bool> VerifyStagedMapStructureAsync(QuestDevice device, string stagingPath, BeatMapIdentity expectedIdentity, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> VerifyStagedMapStructureAsync(QuestDevice device, string stagingPath, BeatMapIdentity expectedIdentity, CancellationToken cancellationToken = default) => Task.FromResult(StructureVerified);
         public Task<bool> TryPromoteStagingAsync(QuestDevice device, string stagingPath, string finalPath, CancellationToken cancellationToken = default)
         {
+            if (FailPromotion) throw new IOException("Fixture promotion failure.");
             if (Directories.Contains(finalPath)) return Task.FromResult(false);
             PromoteCount++;
             Directories.Remove(stagingPath);
@@ -467,6 +573,7 @@ public sealed class Phase6AExecutionContractTests
         public Task AbandonStagingAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default) { Directories.Remove(stagingPath); return Task.CompletedTask; }
         public async Task ImportPlaylistAsync(QuestDevice device, PreparedPlaylistSource source, CancellationToken cancellationToken = default)
         {
+            if (FailPlaylistImport) throw new IOException("Fixture playlist transfer failure.");
             ImportCount++;
             ImportedPlaylistContents.Add(await File.ReadAllTextAsync(source.SnapshotPath, cancellationToken));
         }

@@ -34,7 +34,8 @@ public sealed class SyncExecutor
     public async Task<SyncResult> ExecuteAsync(
         SyncExecutionPlan executionPlan,
         QuestDevice selectedDevice,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<SyncProgress>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(executionPlan);
         ArgumentNullException.ThrowIfNull(selectedDevice);
@@ -47,6 +48,7 @@ public sealed class SyncExecutor
         var preparedPlaylists = new Dictionary<string, PreparedPlaylistSource>(SyncExecutionPlan.SourcePathComparer);
         var workspaceTouched = false;
         var workspaceCleaned = false;
+        progress?.Report(new SyncProgress("Preparing", 0, results.Length, "Validating target Quest and execution inputs."));
 
         if (!selectedDevice.IsConnected || !string.Equals(selectedDevice.Serial, executionPlan.Target.DeviceSerial, StringComparison.Ordinal))
         {
@@ -61,6 +63,7 @@ public sealed class SyncExecutor
 
         try
         {
+            progress?.Report(new SyncProgress("Preparing", 0, executionPlan.PlaylistSources.Count, "Preparing immutable playlist snapshots."));
             workspaceTouched = executionPlan.PlaylistSources.Count > 0;
             foreach (var source in executionPlan.PlaylistSources)
             {
@@ -82,6 +85,26 @@ public sealed class SyncExecutor
             return await RefuseAsync($"Playlist snapshot preparation failed: {exception.Message}").ConfigureAwait(false);
         }
 
+        if (results.Any(result => result.Operation.Kind is SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist))
+        {
+            progress?.Report(new SyncProgress("Stopping Beat Saber", 0, results.Length, "Stopping Beat Saber before Quest writes."));
+            try
+            {
+                var preparation = await _target.PrepareForWritesAsync(selectedDevice, cancellationToken).ConfigureAwait(false);
+                if (!preparation.IsReady)
+                    return await RefuseAsync(preparation.Message ?? "Quest write preparation was refused.").ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancelFrom(0);
+                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled before Quest writes began.").ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                return await RefuseAsync($"Could not prepare Quest writes: {exception.Message}").ConfigureAwait(false);
+            }
+        }
+
         var preparedMaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var blockedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
@@ -95,6 +118,12 @@ public sealed class SyncExecutor
             }
 
             var operation = results[index].Operation;
+            progress?.Report(new SyncProgress(
+                ProgressPhase(operation.Kind),
+                index + 1,
+                results.Length,
+                operation.Description,
+                operation));
             results[index] = results[index] with { Status = SyncOperationStatus.Running };
             await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
 
@@ -103,7 +132,7 @@ public sealed class SyncExecutor
                 results[index] = operation.Kind switch
                 {
                     SyncOperationKind.DownloadMap => await DownloadAsync(results[index], executionPlan, preparedMaps, blockedMaps, cancellationToken).ConfigureAwait(false),
-                    SyncOperationKind.UploadMap => await UploadAsync(results[index], selectedDevice, executionId, preparedMaps, blockedMaps, cancellationToken).ConfigureAwait(false),
+                    SyncOperationKind.UploadMap => await UploadAsync(results[index], selectedDevice, executionId, preparedMaps, blockedMaps, diagnosticWarnings, cancellationToken).ConfigureAwait(false),
                     SyncOperationKind.ImportPlaylist => await ImportPlaylistAsync(results[index], selectedDevice, preparedPlaylists, cancellationToken).ConfigureAwait(false),
                     _ => results[index] with { Status = SyncOperationStatus.Skipped, Message = "This operation does not write to the Quest." }
                 };
@@ -118,6 +147,10 @@ public sealed class SyncExecutor
             {
                 if (operation.MapIdentity is not null) blockedMaps.Add(operation.MapIdentity.Hash);
                 results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message };
+            }
+            finally
+            {
+                foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
             }
 
             await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
@@ -201,13 +234,14 @@ public sealed class SyncExecutor
         Guid executionId,
         IDictionary<string, string> preparedMaps,
         ISet<string> blockedMaps,
+        ICollection<string> diagnosticWarnings,
         CancellationToken cancellationToken)
     {
         var identity = result.Operation.MapIdentity ?? throw new InvalidOperationException("UploadMap requires an exact map identity.");
         if (blockedMaps.Contains(identity.Hash))
             return result with { Status = SyncOperationStatus.Skipped, Message = "The exact map source could not be prepared." };
 
-        var finalPath = JoinRemote(_paths.CustomLevels, identity.Hash);
+        var finalPath = QuestExecutionPaths.MapFinal(_paths, identity);
         if (await _target.DirectoryExistsAsync(device, finalPath, cancellationToken).ConfigureAwait(false))
             return result with { Status = SyncOperationStatus.Skipped, Message = "Final map directory already exists; it was preserved." };
 
@@ -218,7 +252,7 @@ public sealed class SyncExecutor
                 return result with { Status = SyncOperationStatus.Failed, Message = "The exact map is not available in the local cache." };
         }
 
-        var stagingPath = JoinRemote(_paths.CustomLevels, $".qbsync-{identity.Hash}-{executionId:N}");
+        var stagingPath = QuestExecutionPaths.MapStaging(_paths, identity, executionId);
         var stagingCreated = false;
         try
         {
@@ -240,7 +274,16 @@ public sealed class SyncExecutor
         finally
         {
             if (stagingCreated)
-                await _target.AbandonStagingAsync(device, stagingPath, CancellationToken.None).ConfigureAwait(false);
+            {
+                try
+                {
+                    await _target.AbandonStagingAsync(device, stagingPath, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    diagnosticWarnings.Add($"Current map staging could not be cleaned: {exception.Message}");
+                }
+            }
         }
     }
 
@@ -268,5 +311,11 @@ public sealed class SyncExecutor
         string.Equals(lookup.ResolvedHash, identity.Hash, StringComparison.OrdinalIgnoreCase) &&
         lookup.DownloadUri is not null;
 
-    private static string JoinRemote(string parent, string child) => $"{parent.TrimEnd('/')}/{child}";
+    private static string ProgressPhase(SyncOperationKind kind) => kind switch
+    {
+        SyncOperationKind.DownloadMap => "Downloading",
+        SyncOperationKind.UploadMap => "Uploading and verifying",
+        SyncOperationKind.ImportPlaylist => "Transferring playlist",
+        _ => "Reviewing"
+    };
 }

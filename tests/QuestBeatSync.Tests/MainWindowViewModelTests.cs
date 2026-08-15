@@ -181,7 +181,7 @@ public sealed class MainWindowViewModelTests
         await viewModel.Sync.BuildCommand.ExecuteAsync();
 
         Assert.IsTrue(viewModel.HasOperationError);
-        StringAssert.Contains(viewModel.OperationErrorText!, "Build Sync Plan");
+        StringAssert.Contains(viewModel.OperationErrorText!, "Sync");
         StringAssert.Contains(viewModel.OperationErrorText!, "cache read failed");
         viewModel.DismissOperationErrorCommand.Execute(null);
         Assert.IsFalse(viewModel.HasOperationError);

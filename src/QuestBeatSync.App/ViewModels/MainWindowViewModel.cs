@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
+using QuestBeatSync.Infrastructure.Execution;
 
 namespace QuestBeatSync.App.ViewModels;
 
@@ -9,13 +10,13 @@ public sealed class MainWindowViewModel : ViewModelBase
     private NavigationItemViewModel? _selectedPage;
     private OperationError? _operationError;
 
-    public MainWindowViewModel(IQuestTransport transport, IQuestBeatSaberScanner scanner, ILocalPlaylistImporter playlistImporter, IBeatSaverClient beatSaverClient, IBeatMapCache beatMapCache, AdbQuestTransportOptions adbOptions, AdbSettingsStore settingsStore)
+    public MainWindowViewModel(IQuestTransport transport, IQuestBeatSaberScanner scanner, ILocalPlaylistImporter playlistImporter, IBeatSaverClient beatSaverClient, IBeatMapCache beatMapCache, AdbQuestTransportOptions adbOptions, AdbSettingsStore settingsStore, SyncExecutor? syncExecutor = null)
     {
         NavigationItems = [new("Dashboard"), new("Playlists"), new("Library"), new("Sync"), new("Backup"), new("Settings")]; _selectedPage = NavigationItems[0];
         Library = new();
         Dashboard = new(transport, scanner, Library, exception => ReportAsync("Refresh devices", exception));
         Playlists = new(playlistImporter, beatSaverClient, beatMapCache, Library, exception => ReportAsync("Playlist operation", exception));
-        Sync = new(Playlists, Library, beatSaverClient, beatMapCache, exception => ReportAsync("Build Sync Plan", exception));
+        Sync = new(Playlists, Library, beatSaverClient, beatMapCache, exception => ReportAsync("Sync", exception), syncExecutor, () => Dashboard.SelectedDevice, Dashboard.RescanSelectedDeviceAsync);
         Settings = new(adbOptions, settingsStore, Dashboard.RefreshDevicesAsync, exception => ReportAsync("Save ADB settings", exception));
         Dashboard.AdbUnavailable += (_, _) => OpenSettings();
         OpenSettingsCommand = new(OpenSettings);

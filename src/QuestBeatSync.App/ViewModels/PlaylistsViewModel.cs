@@ -84,17 +84,19 @@ public sealed class PlaylistsViewModel : ViewModelBase
                         continue;
                     }
 
+                    var preparedStatuses = await CreateStatusesAsync(playlist);
                     var wasSelected = ReferenceEquals(SelectedPlaylist, existing);
-                    _statuses.Remove(existing);
                     ImportedPlaylists[existingIndex] = playlist;
-                    _statuses[playlist] = await CreateStatusesAsync(playlist);
+                    _statuses.Remove(existing);
+                    _statuses[playlist] = preparedStatuses;
                     if (wasSelected) SelectedPlaylist = playlist;
                     requirementsChanged = true;
                     continue;
                 }
 
+                var newStatuses = await CreateStatusesAsync(playlist);
                 first ??= playlist; ImportedPlaylists.Add(playlist);
-                _statuses[playlist] = await CreateStatusesAsync(playlist);
+                _statuses[playlist] = newStatuses;
                 requirementsChanged = true;
             }
             if (first is not null) SelectedPlaylist = first;

@@ -1,6 +1,6 @@
 > [!WARNING]
 > **QuestBeatSync 还没有成型，目前是早期开发版本。**
-> 功能、数据格式和界面都可能发生不兼容变化。当前版本只能读取 Quest 环境、导入本地歌单、缓存谱面并生成同步计划；**它还不能执行同步，也不应被当作完整的 Quest 曲库管理工具使用。**
+> 功能、数据格式和界面都可能发生不兼容变化。当前版本已经包含首个真实 ADB 同步执行路径，但尚未完成真实 Quest 人工验收；**请只使用小型 canary 歌单谨慎测试，不应把它当作完整或稳定的 Quest 曲库管理工具。**
 
 # QuestBeatSync
 
@@ -21,11 +21,13 @@ QuestBeatSync（QBSync）是一个面向 Windows 和 Linux 的桌面工具，目
 - 区分 Online、Unavailable 和 Unknown，不把网络异常当成谱面下架。
 - 将谱面原子下载到本地缓存，验证 `Info.dat` 后才标记为完整。
 - 生成非破坏性的同步预览，包括下载、上传、歌单导入、保留及跳过操作。
+- 将执行计划绑定到指定 Quest、扫描指纹和不可变歌单快照，经二次确认后执行。
+- 通过 QBSync staging 目录上传谱面、验证基本结构并进行 no-clobber promotion。
+- 将准备好的歌单快照传输到 QBSync 管理的确定性远程文件名。
+- 显示 operation 级进度、取消和执行结果；已完成操作不会因取消而回滚。
 
 目前尚未实现：
 
-- 执行 `SyncPlan`。
-- 向 Quest 上传歌曲或歌单。
 - 删除 Quest 上的歌曲。
 - Beat Saber Mod 安装、降级或 BMBF / MBF 替代功能。
 - BeatSaver 登录、在线歌单编辑、PC Beat Saber、Score / Replay 或 Mod 下载管理。
@@ -95,12 +97,16 @@ ADB 可执行文件的查找顺序是：
 QuestBeatSync/
 ├── settings.json
 ├── tools/
-└── cache/
+├── cache/
     └── maps/
         └── <SHA1>/
+├── executions/             # 当前执行的临时不可变歌单快照
+└── execution-journal/      # 诊断历史，不用于自动恢复
 ```
 
 谱面先下载并解压到临时目录。只有通过基本完整性检查并写入完成标记后，目录才会被原子移动到正式 `<SHA1>` 缓存位置。异常退出留下的临时目录不会被视为有效缓存。
+
+执行时，歌单会先复制到 execution-owned snapshot；后续 ADB 传输只读取该 snapshot。正常结束或取消后会 best-effort 删除 snapshot，崩溃遗留不会被自动恢复为同步计划。
 
 ## 构建与测试
 

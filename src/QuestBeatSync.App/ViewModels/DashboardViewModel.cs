@@ -82,6 +82,8 @@ public sealed class DashboardViewModel : ViewModelBase
 
     public async Task InitializeAsync() => await RefreshDevicesAsync();
 
+    public Task RescanSelectedDeviceAsync() => RefreshEnvironmentAsync(SelectedDevice);
+
     public async Task RefreshDevicesAsync()
     {
         IsRefreshing = true;

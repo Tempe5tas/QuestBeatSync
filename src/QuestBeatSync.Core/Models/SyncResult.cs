@@ -34,3 +34,17 @@ public sealed record SyncResult(
     IReadOnlyList<SyncOperationResult> Operations,
     IReadOnlyList<string> DiagnosticWarnings,
     string? Message = null);
+
+public sealed record QuestWritePreparationResult(bool IsReady, string? Message = null)
+{
+    public static QuestWritePreparationResult Ready { get; } = new(true);
+
+    public static QuestWritePreparationResult Refused(string message) => new(false, message);
+}
+
+public sealed record SyncProgress(
+    string Phase,
+    int Current,
+    int Total,
+    string Message,
+    SyncOperation? Operation = null);

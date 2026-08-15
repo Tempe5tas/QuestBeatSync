@@ -124,6 +124,39 @@ public sealed class WorkflowViewModelTests
     }
 
     [TestMethod]
+    public async Task Reimport_StatusPreparationFailure_PreservesOriginalPlaylistAndStatuses()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "failed-refresh.bplist");
+        var original = PlaylistWithEntries("Original", path, new string('A', 64), 1);
+        var updated = PlaylistWithEntries("Updated", path, new string('B', 64), 2);
+        var cache = new SwitchableFailingCache();
+        var viewModel = new PlaylistsViewModel(
+            new BatchImporter([original], [updated]),
+            new RecordingClient(),
+            cache,
+            new LibraryViewModel(),
+            _ => Task.CompletedTask);
+        var changes = 0;
+        viewModel.RequirementsChanged += (_, _) => changes++;
+        await viewModel.ImportAsync([path]);
+        var originalStatuses = viewModel.AllEntryStatuses.ToArray();
+        originalStatuses[0].StatusMessage = "keep me";
+        cache.Fail = true;
+
+        await viewModel.ImportAsync([path]);
+
+        Assert.AreEqual(1, viewModel.ImportedPlaylists.Count);
+        Assert.AreSame(original, viewModel.ImportedPlaylists[0]);
+        Assert.AreSame(original, viewModel.SelectedPlaylist);
+        Assert.AreEqual(1, viewModel.SelectedEntryCount);
+        Assert.AreEqual(1, viewModel.TotalPlaylistReferences);
+        Assert.AreSame(originalStatuses[0], AssertSingle(viewModel.AllEntryStatuses.ToArray()));
+        Assert.AreEqual("keep me", originalStatuses[0].StatusMessage);
+        Assert.AreEqual(1, changes);
+        Assert.IsTrue(viewModel.HasImportErrors);
+    }
+
+    [TestMethod]
     public async Task Import_SameTitleFromDifferentPaths_KeepsBothSources()
     {
         var first = PlaylistWithEntries("Same title", Path.Combine(Path.GetTempPath(), "A", "foo.bplist"), new string('A', 64), 1);
@@ -193,5 +226,16 @@ public sealed class WorkflowViewModelTests
             CacheCallCount++;
             return Task.FromResult(new BeatMapCacheResult(BeatMapCacheOutcome.Cached));
         }
+    }
+
+    private sealed class SwitchableFailingCache : IBeatMapCache
+    {
+        public bool Fail { get; set; }
+
+        public Task<bool> IsCachedAsync(string hash, CancellationToken cancellationToken = default) =>
+            Fail ? throw new IOException("Fixture cache lookup failure.") : Task.FromResult(false);
+
+        public Task<BeatMapCacheResult> CacheAsync(BeatSaverLookupResult lookup, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

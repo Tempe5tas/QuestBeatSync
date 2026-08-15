@@ -333,13 +333,12 @@
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel Spacing="4">
               <TextBlock FontSize="20" FontWeight="SemiBold" Text="Sync preview" />
-              <TextBlock Foreground="#AAB1C0" Text="Generate and inspect a plan. Nothing is executed in this phase." />
+              <TextBlock Foreground="#AAB1C0" Text="Generate, inspect, explicitly confirm, then execute the bound plan." />
             </StackPanel>
-            <Button
-                Grid.Column="1"
-                VerticalAlignment="Center"
-                Command="{Binding Sync.BuildCommand}"
-                Content="Build Sync Plan" />
+            <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+              <Button Command="{Binding Sync.BuildCommand}" Content="Build Sync Plan" />
+              <Button Command="{Binding Sync.ReviewExecutionCommand}" Content="Review &amp; Execute" />
+            </StackPanel>
           </Grid>
 
           <Border Padding="16" CornerRadius="8" Background="#31281D" BorderBrush="#D7A95B" BorderThickness="1">
@@ -431,6 +430,32 @@
                   Text="{Binding Sync.DeletionCount, StringFormat='{}Deletion: {0}'}" />
             </Border>
 
+            <Border
+                IsVisible="{Binding Sync.IsConfirmationVisible}"
+                Padding="18"
+                CornerRadius="8"
+                Background="#31281D"
+                BorderBrush="#D7A95B"
+                BorderThickness="1">
+              <StackPanel Spacing="10">
+                <TextBlock FontSize="19" FontWeight="SemiBold" Text="Confirm this exact SyncExecutionPlan" />
+                <TextBlock Text="{Binding Sync.TargetSerial, StringFormat='{}Target Quest: {0}'}" />
+                <TextBlock Text="{Binding Sync.AlreadyInstalled, StringFormat='{}Maps already installed: {0}'}" />
+                <TextBlock Text="{Binding Sync.DownloadRequired, StringFormat='{}Maps to download: {0}'}" />
+                <TextBlock Text="{Binding Sync.UploadRequired, StringFormat='{}Maps to upload: {0}'}" />
+                <TextBlock Text="{Binding Sync.PlaylistsToTransfer, StringFormat='{}Playlists to transfer: {0}'}" />
+                <TextBlock Text="{Binding Sync.QuestOnlyPreserved, StringFormat='{}Quest-only maps preserved: {0}'}" />
+                <TextBlock Text="{Binding Sync.Unavailable, StringFormat='{}Unavailable maps skipped: {0}'}" />
+                <TextBlock Text="{Binding Sync.Unknown, StringFormat='{}Unknown maps skipped: {0}'}" />
+                <TextBlock FontSize="18" FontWeight="Bold" Foreground="#83C98E" Text="Maps to delete: 0" />
+                <TextBlock Foreground="#D7A95B" Text="Beat Saber will be force-stopped. It will not be relaunched automatically." TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Command="{Binding Sync.ConfirmExecutionCommand}" Content="Confirm and Execute" />
+                  <Button Command="{Binding Sync.CancelConfirmationCommand}" Content="Back" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
             <Expander Header="Operations" IsExpanded="True">
               <Border Margin="0,10,0,0" Padding="14" CornerRadius="8" Background="#20242D">
                 <StackPanel Spacing="8">
@@ -458,6 +483,40 @@
               </Border>
             </Expander>
           </StackPanel>
+
+          <Border IsVisible="{Binding Sync.IsExecuting}" Padding="16" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="10">
+              <ProgressBar IsIndeterminate="True" />
+              <TextBlock Text="{Binding Sync.ProgressMessage}" TextWrapping="Wrap" />
+              <Button HorizontalAlignment="Left" Command="{Binding Sync.CancelExecutionCommand}" Content="Cancel remaining work" />
+              <TextBlock Foreground="#AAB1C0" Text="Completed operations are preserved; cancel does not roll them back." />
+            </StackPanel>
+          </Border>
+
+          <Border IsVisible="{Binding Sync.HasResult}" Padding="16" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="10">
+              <TextBlock FontSize="19" FontWeight="SemiBold" Text="Execution result" />
+              <TextBlock Text="{Binding Sync.ResultSummary}" TextWrapping="Wrap" />
+              <TextBlock Foreground="#83C98E" Text="Start Beat Saber to let SongCore and PlaylistManager load transferred content." TextWrapping="Wrap" />
+              <ItemsControl ItemsSource="{Binding Sync.OperationResults}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:SyncOperationResult">
+                    <Grid Margin="0,4" ColumnDefinitions="1.2*,1.2*,4*" ColumnSpacing="12">
+                      <TextBlock Text="{Binding Status}" />
+                      <TextBlock Grid.Column="1" Text="{Binding Operation.Kind}" />
+                      <TextBlock Grid.Column="2" Text="{Binding Message}" TextWrapping="Wrap" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Border IsVisible="{Binding Sync.HasDiagnosticWarnings}" Padding="10" Background="#31281D" CornerRadius="6">
+                <StackPanel Spacing="4">
+                  <TextBlock FontWeight="SemiBold" Foreground="#D7A95B" Text="Diagnostic warnings" />
+                  <TextBlock Foreground="#D7A95B" Text="{Binding Sync.DiagnosticWarningsText}" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </Border>
         </StackPanel>
 
         <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">

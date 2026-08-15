@@ -5,7 +5,7 @@ using QuestBeatSync.Infrastructure.Abstractions;
 
 namespace QuestBeatSync.Infrastructure.Cache;
 
-public sealed class LocalBeatMapCache : IBeatMapCache
+public sealed class LocalBeatMapCache : IBeatMapCache, ISyncMapSourceProvider
 {
     private const string CompletionMarker = ".qbsync-complete";
     private readonly string _mapsRoot;
@@ -143,6 +143,36 @@ public sealed class LocalBeatMapCache : IBeatMapCache
                 }
             }
         }
+    }
+
+    public Task<string?> GetCachedMapDirectoryAsync(
+        BeatMapIdentity identity,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        cancellationToken.ThrowIfCancellationRequested();
+        var path = GetTargetPath(identity.Hash);
+        return Task.FromResult(IsCompleteCacheDirectory(path) ? path : null);
+    }
+
+    public async Task<string> DownloadExactMapAsync(
+        BeatMapIdentity identity,
+        BeatSaverLookupResult exactLookup,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(exactLookup);
+        if (!exactLookup.ExactHashMatched ||
+            !string.Equals(exactLookup.RequestedHash, identity.Hash, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(exactLookup.ResolvedHash, identity.Hash, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Exact BeatSaver hash evidence is required before caching a sync map.");
+        }
+
+        var result = await CacheAsync(exactLookup, cancellationToken).ConfigureAwait(false);
+        if (!result.IsSuccess || string.IsNullOrWhiteSpace(result.CachePath))
+            throw new IOException(result.ErrorMessage ?? "The exact map could not be prepared in the local cache.");
+        return result.CachePath;
     }
 
     private static async Task ValidateInfoDatAsync(string infoPath, CancellationToken cancellationToken)

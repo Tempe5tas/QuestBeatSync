@@ -26,6 +26,12 @@ public interface ISyncMapSourceProvider
 
 public interface IQuestSyncTarget
 {
+    IReadOnlyList<string> DrainDiagnosticWarnings();
+
+    Task<QuestWritePreparationResult> PrepareForWritesAsync(
+        QuestDevice device,
+        CancellationToken cancellationToken = default);
+
     Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default);
 
     Task CreateStagingDirectoryAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default);
