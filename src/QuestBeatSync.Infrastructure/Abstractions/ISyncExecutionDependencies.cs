@@ -2,9 +2,16 @@ using QuestBeatSync.Core.Models;
 
 namespace QuestBeatSync.Infrastructure.Abstractions;
 
-public interface IPlaylistSourceVerifier
+public interface IPlaylistExecutionWorkspace
 {
-    Task<bool> MatchesAsync(PlaylistSourceIdentity source, CancellationToken cancellationToken = default);
+    // Snapshots are execution-owned immutable inputs. Cleanup is best-effort after the run;
+    // leftovers are diagnostic artifacts only and must never be resumed as a SyncPlan.
+    Task<PreparedPlaylistSource> PrepareAsync(
+        Guid executionId,
+        PlaylistSourceIdentity source,
+        CancellationToken cancellationToken = default);
+
+    Task CleanupAsync(Guid executionId, CancellationToken cancellationToken = default);
 }
 
 public interface ISyncMapSourceProvider
@@ -30,7 +37,9 @@ public interface IQuestSyncTarget
         IReadOnlySet<string> excludedFileNames,
         CancellationToken cancellationToken = default);
 
-    Task<bool> VerifyStagedMapAsync(
+    // This verifies staged transfer completeness and required map structure only.
+    // It does not recompute BeatSaver's version SHA1 from map contents.
+    Task<bool> VerifyStagedMapStructureAsync(
         QuestDevice device,
         string stagingPath,
         BeatMapIdentity expectedIdentity,
@@ -46,7 +55,7 @@ public interface IQuestSyncTarget
 
     Task ImportPlaylistAsync(
         QuestDevice device,
-        PlaylistSourceIdentity source,
+        PreparedPlaylistSource source,
         CancellationToken cancellationToken = default);
 }
 

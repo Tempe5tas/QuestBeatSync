@@ -32,4 +32,5 @@ public sealed record SyncResult(
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
     IReadOnlyList<SyncOperationResult> Operations,
+    IReadOnlyList<string> DiagnosticWarnings,
     string? Message = null);

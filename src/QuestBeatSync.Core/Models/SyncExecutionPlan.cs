@@ -10,9 +10,19 @@ public sealed class SyncExecutionPlan
     {
         Plan = plan ?? throw new ArgumentNullException(nameof(plan));
         Target = target ?? throw new ArgumentNullException(nameof(target));
-        PlaylistSources = (playlistSources ?? throw new ArgumentNullException(nameof(playlistSources)))
-            .DistinctBy(source => source.CanonicalPath, SourcePathComparer)
+        var sourceGroups = (playlistSources ?? throw new ArgumentNullException(nameof(playlistSources)))
+            .GroupBy(source => source.CanonicalPath, SourcePathComparer)
             .ToArray();
+        var conflict = sourceGroups.FirstOrDefault(group =>
+            group.Select(source => source.ContentSha256).Distinct(StringComparer.Ordinal).Skip(1).Any());
+        if (conflict is not null)
+        {
+            throw new ArgumentException(
+                $"Playlist source '{conflict.Key}' has conflicting content SHA256 identities.",
+                nameof(playlistSources));
+        }
+
+        PlaylistSources = sourceGroups.Select(group => group.First()).ToArray();
         ExactLookups = (exactLookups ?? new Dictionary<string, BeatSaverLookupResult>())
             .Where(pair => BeatSaverHash.IsValid(pair.Key))
             .ToDictionary(pair => BeatSaverHash.Normalize(pair.Key), pair => pair.Value, StringComparer.OrdinalIgnoreCase);
@@ -20,7 +30,9 @@ public sealed class SyncExecutionPlan
         var sourcesByPath = PlaylistSources.ToDictionary(source => source.CanonicalPath, SourcePathComparer);
         foreach (var operation in Plan.Operations.Where(operation => operation.Kind == SyncOperationKind.ImportPlaylist))
         {
-            if (operation.PlaylistSource is null || !sourcesByPath.TryGetValue(operation.PlaylistSource.CanonicalPath, out var source) || source != operation.PlaylistSource)
+            if (operation.PlaylistSource is null ||
+                !sourcesByPath.TryGetValue(operation.PlaylistSource.CanonicalPath, out var source) ||
+                !string.Equals(source.ContentSha256, operation.PlaylistSource.ContentSha256, StringComparison.Ordinal))
             {
                 throw new ArgumentException("Every ImportPlaylist operation must carry a matching canonical source identity.", nameof(plan));
             }

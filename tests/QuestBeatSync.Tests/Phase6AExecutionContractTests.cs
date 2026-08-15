@@ -61,7 +61,7 @@ public sealed class Phase6AExecutionContractTests
         await File.WriteAllTextAsync(path, "original");
         var source = new PlaylistSourceIdentity(Path.GetFullPath(path), await Sha256Async(path));
         var plan = Plan(new SyncOperation(SyncOperationKind.ImportPlaylist, "Import", PlaylistName: "Same", PlaylistSource: source));
-        var fixture = CreateFixture(EmptyScan(), plan, verifier: new LocalPlaylistSourceVerifier());
+        var fixture = CreateFixture(EmptyScan(), plan);
         await File.WriteAllTextAsync(path, "changed");
 
         var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
@@ -69,6 +69,60 @@ public sealed class Phase6AExecutionContractTests
         Assert.AreEqual(SyncRunStatus.Refused, result.Status);
         StringAssert.Contains(result.Message, "Playlist source changed");
         Assert.AreEqual(0, fixture.Target.MutationCount);
+    }
+
+    [TestMethod]
+    public async Task SourceChangesAfterSnapshot_ImportUsesApprovedSnapshotBytes()
+    {
+        var path = Path.Combine(_temporaryRoot, "approved.bplist");
+        await File.WriteAllTextAsync(path, "approved-A");
+        var source = new PlaylistSourceIdentity(path, await Sha256Async(path));
+        var plan = Plan(new SyncOperation(SyncOperationKind.ImportPlaylist, "Import", PlaylistName: "Approved", PlaylistSource: source));
+        var innerWorkspace = new LocalPlaylistExecutionWorkspace(Path.Combine(_temporaryRoot, "executions"));
+        var workspace = new MutatingWorkspace(innerWorkspace, () => File.WriteAllText(path, "changed-B"));
+        var fixture = CreateFixture(EmptyScan(), plan, workspace: workspace);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        CollectionAssert.AreEqual(new[] { "approved-A" }, fixture.Target.ImportedPlaylistContents.ToArray());
+        Assert.AreEqual("changed-B", await File.ReadAllTextAsync(path));
+        Assert.IsNotNull(workspace.Prepared);
+        Assert.IsFalse(File.Exists(workspace.Prepared.SnapshotPath));
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringSnapshotPreparation_CancelsBeforeQuestWriteAndCleansSnapshot()
+    {
+        var path = Path.Combine(_temporaryRoot, "cancel.bplist");
+        await File.WriteAllTextAsync(path, "approved");
+        var source = new PlaylistSourceIdentity(path, await Sha256Async(path));
+        var plan = Plan(new SyncOperation(SyncOperationKind.ImportPlaylist, "Import", PlaylistName: "Cancel", PlaylistSource: source));
+        using var cancellation = new CancellationTokenSource();
+        var innerWorkspace = new LocalPlaylistExecutionWorkspace(Path.Combine(_temporaryRoot, "executions"));
+        var workspace = new CancelingWorkspace(innerWorkspace, cancellation);
+        var fixture = CreateFixture(EmptyScan(), plan, workspace: workspace);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device(), cancellation.Token);
+
+        Assert.AreEqual(SyncRunStatus.Canceled, result.Status);
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+        Assert.IsNotNull(workspace.Prepared);
+        Assert.IsFalse(File.Exists(workspace.Prepared.SnapshotPath));
+    }
+
+    [TestMethod]
+    public void SamePathWithConflictingContentHashes_FailsExecutionPlanConstruction()
+    {
+        var first = new PlaylistSourceIdentity(Path.Combine(_temporaryRoot, "conflict.bplist"), ShaA);
+        var conflicting = new PlaylistSourceIdentity(first.CanonicalPath, ShaB);
+        var plan = Plan(new SyncOperation(SyncOperationKind.ImportPlaylist, "Import", PlaylistName: "Conflict", PlaylistSource: first));
+
+        var exception = Assert.Throws<ArgumentException>(() =>
+            new SyncExecutionPlan(plan, QuestScanBinding.Capture("SERIAL", EmptyScan()), [first, conflicting]));
+
+        StringAssert.Contains(exception.Message, "conflicting content SHA256");
     }
 
     [TestMethod]
@@ -170,6 +224,68 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
+    public async Task InitialJournalFailure_DoesNotPreventExecution()
+    {
+        var journal = new SelectiveFailJournal(1);
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)), journal: journal);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.IsTrue(result.DiagnosticWarnings.Any(warning => warning.Contains("journal", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
+    public async Task JournalFailureAfterSuccessfulUpload_PreservesTruthAndContinues()
+    {
+        var journal = new SelectiveFailJournal(3);
+        var fixture = CreateFixture(EmptyScan(), Plan(
+            Operation(SyncOperationKind.UploadMap, HashA),
+            Operation(SyncOperationKind.UploadMap, HashB)), journal: journal);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        CollectionAssert.AreEqual(
+            new[] { SyncOperationStatus.Succeeded, SyncOperationStatus.Succeeded },
+            result.Operations.Select(operation => operation.Status).ToArray());
+        Assert.AreEqual(2, fixture.Target.PromoteCount);
+        Assert.IsNotEmpty(result.DiagnosticWarnings);
+    }
+
+    [TestMethod]
+    public async Task FinalJournalFailure_DoesNotChangeSuccessfulResult()
+    {
+        var journal = new SelectiveFailJournal(4);
+        var fixture = CreateFixture(EmptyScan(), Plan(Operation(SyncOperationKind.UploadMap, HashA)), journal: journal);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.IsNotEmpty(result.DiagnosticWarnings);
+    }
+
+    [TestMethod]
+    public async Task SnapshotCleanupFailure_IsDiagnosticOnly()
+    {
+        var path = Path.Combine(_temporaryRoot, "cleanup-warning.bplist");
+        await File.WriteAllTextAsync(path, "approved");
+        var source = new PlaylistSourceIdentity(path, await Sha256Async(path));
+        var plan = Plan(new SyncOperation(SyncOperationKind.ImportPlaylist, "Import", PlaylistName: "Cleanup", PlaylistSource: source));
+        var workspace = new CleanupFailingWorkspace(
+            new LocalPlaylistExecutionWorkspace(Path.Combine(_temporaryRoot, "executions")));
+        var fixture = CreateFixture(EmptyScan(), plan, workspace: workspace);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.IsTrue(result.DiagnosticWarnings.Any(warning => warning.Contains("snapshots", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    [TestMethod]
     public void ViewModelsContainNoDirectPushInvocation()
     {
         var root = FindRepositoryRoot();
@@ -211,7 +327,7 @@ public sealed class Phase6AExecutionContractTests
     {
         var journal = new JsonSyncExecutionJournal(_temporaryRoot);
         var result = new SyncResult(Guid.NewGuid(), SyncRunStatus.Completed, "SERIAL", DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow, [], null);
+            DateTimeOffset.UtcNow, [], [], null);
 
         await journal.WriteAsync(result);
 
@@ -220,24 +336,31 @@ public sealed class Phase6AExecutionContractTests
         Assert.IsFalse(typeof(ISyncExecutionJournal).GetMethods().Any(method => method.Name.Contains("Read", StringComparison.OrdinalIgnoreCase) || method.Name.Contains("Resume", StringComparison.OrdinalIgnoreCase)));
     }
 
-    private static ExecutionFixture CreateFixture(
+    private ExecutionFixture CreateFixture(
         QuestBeatSaberScanResult boundScan,
         SyncPlan plan,
         QuestBeatSaberScanResult? currentScan = null,
-        IPlaylistSourceVerifier? verifier = null,
+        IPlaylistExecutionWorkspace? workspace = null,
+        ISyncExecutionJournal? journal = null,
         IReadOnlyDictionary<string, BeatSaverLookupResult>? lookups = null)
     {
         var scanner = new StubScanner(currentScan ?? boundScan);
         var target = new RecordingTarget();
         var mapSources = new RecordingMapSources();
-        var journal = new MemoryJournal();
+        var recordingJournal = journal as MemoryJournal ?? new MemoryJournal();
         var sources = plan.Operations
             .Where(operation => operation.PlaylistSource is not null)
             .Select(operation => operation.PlaylistSource!)
             .ToArray();
         var executionPlan = new SyncExecutionPlan(plan, QuestScanBinding.Capture("SERIAL", boundScan), sources, lookups);
-        var executor = new SyncExecutor(scanner, verifier ?? new AlwaysMatchingVerifier(), mapSources, target, journal, QuestBeatSaberPaths.Default);
-        return new ExecutionFixture(executor, executionPlan, scanner, target, mapSources, journal);
+        var executor = new SyncExecutor(
+            scanner,
+            workspace ?? new LocalPlaylistExecutionWorkspace(Path.Combine(_temporaryRoot, "executions")),
+            mapSources,
+            target,
+            journal ?? recordingJournal,
+            QuestBeatSaberPaths.Default);
+        return new ExecutionFixture(executor, executionPlan, scanner, target, mapSources, recordingJournal);
     }
 
     private static SyncPlan Plan(params SyncOperation[] operations)
@@ -300,11 +423,6 @@ public sealed class Phase6AExecutionContractTests
         }
     }
 
-    private sealed class AlwaysMatchingVerifier : IPlaylistSourceVerifier
-    {
-        public Task<bool> MatchesAsync(PlaylistSourceIdentity source, CancellationToken cancellationToken = default) => Task.FromResult(true);
-    }
-
     private sealed class RecordingMapSources : ISyncMapSourceProvider
     {
         public int DownloadCount { get; private set; }
@@ -326,6 +444,7 @@ public sealed class Phase6AExecutionContractTests
         public CancellationTokenSource? CancelUploadUsing { get; set; }
         public string? FailUploadContaining { get; set; }
         public IReadOnlySet<string> LastExcludedFiles { get; private set; } = new HashSet<string>();
+        public List<string> ImportedPlaylistContents { get; } = [];
 
         public Task<bool> DirectoryExistsAsync(QuestDevice device, string remotePath, CancellationToken cancellationToken = default) => Task.FromResult(Directories.Contains(remotePath));
         public Task CreateStagingDirectoryAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default) { CreateStagingCount++; Directories.Add(stagingPath); return Task.CompletedTask; }
@@ -336,7 +455,7 @@ public sealed class Phase6AExecutionContractTests
             if (CancelUploadUsing is not null) { CancelUploadUsing.Cancel(); throw new OperationCanceledException(cancellationToken); }
             return Task.CompletedTask;
         }
-        public Task<bool> VerifyStagedMapAsync(QuestDevice device, string stagingPath, BeatMapIdentity expectedIdentity, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> VerifyStagedMapStructureAsync(QuestDevice device, string stagingPath, BeatMapIdentity expectedIdentity, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public Task<bool> TryPromoteStagingAsync(QuestDevice device, string stagingPath, string finalPath, CancellationToken cancellationToken = default)
         {
             if (Directories.Contains(finalPath)) return Task.FromResult(false);
@@ -346,12 +465,71 @@ public sealed class Phase6AExecutionContractTests
             return Task.FromResult(true);
         }
         public Task AbandonStagingAsync(QuestDevice device, string stagingPath, CancellationToken cancellationToken = default) { Directories.Remove(stagingPath); return Task.CompletedTask; }
-        public Task ImportPlaylistAsync(QuestDevice device, PlaylistSourceIdentity source, CancellationToken cancellationToken = default) { ImportCount++; return Task.CompletedTask; }
+        public async Task ImportPlaylistAsync(QuestDevice device, PreparedPlaylistSource source, CancellationToken cancellationToken = default)
+        {
+            ImportCount++;
+            ImportedPlaylistContents.Add(await File.ReadAllTextAsync(source.SnapshotPath, cancellationToken));
+        }
     }
 
     private sealed class MemoryJournal : ISyncExecutionJournal
     {
         public List<SyncResult> Entries { get; } = [];
         public Task WriteAsync(SyncResult result, CancellationToken cancellationToken = default) { Entries.Add(result); return Task.CompletedTask; }
+    }
+
+    private sealed class SelectiveFailJournal(params int[] failedCalls) : ISyncExecutionJournal
+    {
+        private readonly HashSet<int> _failedCalls = [.. failedCalls];
+        private int _callCount;
+
+        public Task WriteAsync(SyncResult result, CancellationToken cancellationToken = default)
+        {
+            if (_failedCalls.Contains(++_callCount)) throw new IOException($"Journal failure {_callCount}.");
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class MutatingWorkspace(
+        IPlaylistExecutionWorkspace inner,
+        Action afterPreparation) : IPlaylistExecutionWorkspace
+    {
+        public PreparedPlaylistSource? Prepared { get; private set; }
+
+        public async Task<PreparedPlaylistSource> PrepareAsync(Guid executionId, PlaylistSourceIdentity source, CancellationToken cancellationToken = default)
+        {
+            Prepared = await inner.PrepareAsync(executionId, source, cancellationToken);
+            afterPreparation();
+            return Prepared;
+        }
+
+        public Task CleanupAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.CleanupAsync(executionId, cancellationToken);
+    }
+
+    private sealed class CancelingWorkspace(
+        IPlaylistExecutionWorkspace inner,
+        CancellationTokenSource cancellation) : IPlaylistExecutionWorkspace
+    {
+        public PreparedPlaylistSource? Prepared { get; private set; }
+
+        public async Task<PreparedPlaylistSource> PrepareAsync(Guid executionId, PlaylistSourceIdentity source, CancellationToken cancellationToken = default)
+        {
+            Prepared = await inner.PrepareAsync(executionId, source, cancellationToken);
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellationToken);
+        }
+
+        public Task CleanupAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            inner.CleanupAsync(executionId, cancellationToken);
+    }
+
+    private sealed class CleanupFailingWorkspace(IPlaylistExecutionWorkspace inner) : IPlaylistExecutionWorkspace
+    {
+        public Task<PreparedPlaylistSource> PrepareAsync(Guid executionId, PlaylistSourceIdentity source, CancellationToken cancellationToken = default) =>
+            inner.PrepareAsync(executionId, source, cancellationToken);
+
+        public Task CleanupAsync(Guid executionId, CancellationToken cancellationToken = default) =>
+            throw new IOException("Fixture cleanup failure.");
     }
 }

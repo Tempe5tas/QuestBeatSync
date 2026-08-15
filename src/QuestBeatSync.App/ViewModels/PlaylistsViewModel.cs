@@ -61,6 +61,7 @@ public sealed class PlaylistsViewModel : ViewModelBase
     public async Task ImportAsync(IEnumerable<string> paths)
     {
         IsImporting = true; ImportErrors.Clear();
+        var requirementsChanged = false;
         try
         {
             var results = await _importer.ImportAsync(paths);
@@ -69,23 +70,62 @@ public sealed class PlaylistsViewModel : ViewModelBase
             {
                 if (!result.IsSuccess) { ImportErrors.Add($"{Path.GetFileName(result.FilePath)}: {result.ErrorMessage}"); continue; }
                 var playlist = result.Playlist!;
-                if (playlist.SourceIdentity is not null && ImportedPlaylists.Any(existing =>
-                        existing.SourceIdentity is not null && SyncExecutionPlan.SourcePathComparer.Equals(
-                            existing.SourceIdentity.CanonicalPath,
-                            playlist.SourceIdentity.CanonicalPath)))
+                var existingIndex = playlist.SourceIdentity is null
+                    ? -1
+                    : FindSourceIndex(playlist.SourceIdentity.CanonicalPath);
+                if (existingIndex >= 0)
                 {
+                    var existing = ImportedPlaylists[existingIndex];
+                    if (string.Equals(
+                            existing.SourceIdentity!.ContentSha256,
+                            playlist.SourceIdentity!.ContentSha256,
+                            StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var wasSelected = ReferenceEquals(SelectedPlaylist, existing);
+                    _statuses.Remove(existing);
+                    ImportedPlaylists[existingIndex] = playlist;
+                    _statuses[playlist] = await CreateStatusesAsync(playlist);
+                    if (wasSelected) SelectedPlaylist = playlist;
+                    requirementsChanged = true;
                     continue;
                 }
 
                 first ??= playlist; ImportedPlaylists.Add(playlist);
-                var statuses = playlist.Entries.Select(entry => new PlaylistEntryStatusViewModel(entry)).ToArray();
-                _statuses[playlist] = statuses;
-                foreach (var item in statuses) item.CachedLocally = item.Hash is not null && await _cache.IsCachedAsync(item.Hash) ? "Yes" : item.Hash is null ? "Unknown" : "No";
+                _statuses[playlist] = await CreateStatusesAsync(playlist);
+                requirementsChanged = true;
             }
             if (first is not null) SelectedPlaylist = first;
         }
         catch (Exception exception) { ImportErrors.Add($"Playlist import failed: {exception.Message}"); }
-        finally { IsImporting = false; NotifyState(); RequirementsChanged?.Invoke(this, EventArgs.Empty); }
+        finally
+        {
+            IsImporting = false;
+            NotifyState();
+            if (requirementsChanged) RequirementsChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private int FindSourceIndex(string canonicalPath)
+    {
+        for (var index = 0; index < ImportedPlaylists.Count; index++)
+        {
+            if (ImportedPlaylists[index].SourceIdentity is { } source &&
+                SyncExecutionPlan.SourcePathComparer.Equals(source.CanonicalPath, canonicalPath))
+                return index;
+        }
+
+        return -1;
+    }
+
+    private async Task<IReadOnlyList<PlaylistEntryStatusViewModel>> CreateStatusesAsync(Playlist playlist)
+    {
+        var statuses = playlist.Entries.Select(entry => new PlaylistEntryStatusViewModel(entry)).ToArray();
+        foreach (var item in statuses)
+            item.CachedLocally = item.Hash is not null && await _cache.IsCachedAsync(item.Hash) ? "Yes" : item.Hash is null ? "Unknown" : "No";
+        return statuses;
     }
 
     private async Task CheckSelectedAsync()

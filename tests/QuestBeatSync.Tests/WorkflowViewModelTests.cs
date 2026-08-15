@@ -74,16 +74,103 @@ public sealed class WorkflowViewModelTests
         Assert.AreEqual(playlist.SourceIdentity, AssertSingle(sync.ExecutionPlan.PlaylistSources));
     }
 
+    [TestMethod]
+    public async Task Reimport_SamePathAndSameHash_IsANoOp()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "same-source.bplist");
+        var first = PlaylistWithEntries("Original", path, new string('A', 64), 2);
+        var duplicate = PlaylistWithEntries("Ignored duplicate", path, new string('A', 64), 3);
+        var importer = new BatchImporter([first], [duplicate]);
+        var viewModel = new PlaylistsViewModel(importer, new RecordingClient(), new RecordingCache(), new LibraryViewModel(), _ => Task.CompletedTask);
+        var changes = 0;
+        viewModel.RequirementsChanged += (_, _) => changes++;
+
+        await viewModel.ImportAsync([path]);
+        await viewModel.ImportAsync([path]);
+
+        Assert.AreEqual(1, viewModel.ImportedPlaylists.Count);
+        Assert.AreSame(first, viewModel.ImportedPlaylists[0]);
+        Assert.AreEqual(1, changes);
+    }
+
+    [TestMethod]
+    public async Task Reimport_SamePathWithChangedHash_RefreshesAndInvalidatesPlans()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "updated-source.bplist");
+        var original = PlaylistWithEntries("ACG", path, new string('A', 64), 40);
+        var updated = PlaylistWithEntries("ACG Updated", path, new string('B', 64), 50);
+        var importer = new BatchImporter([original], [updated]);
+        var library = new LibraryViewModel();
+        library.Apply(QuestBeatSaberScanResult.Empty, scanCompleted: true, deviceSerial: "QUEST");
+        var client = new RecordingClient();
+        var cache = new RecordingCache();
+        var playlists = new PlaylistsViewModel(importer, client, cache, library, _ => Task.CompletedTask);
+        var sync = new SyncViewModel(playlists, library, client, cache, _ => Task.CompletedTask);
+        await playlists.ImportAsync([path]);
+        await sync.BuildCommand.ExecuteAsync();
+        Assert.IsNotNull(sync.ExecutionPlan);
+
+        await playlists.ImportAsync([path]);
+
+        Assert.AreEqual(1, playlists.ImportedPlaylists.Count);
+        Assert.AreSame(updated, playlists.ImportedPlaylists[0]);
+        Assert.AreSame(updated, playlists.SelectedPlaylist);
+        Assert.AreEqual(50, playlists.SelectedEntryCount);
+        Assert.AreEqual(50, playlists.TotalPlaylistReferences);
+        Assert.AreEqual(50, playlists.AllEntryStatuses.Count());
+        Assert.IsTrue(playlists.AllEntryStatuses.All(status => status.LookupResult is null));
+        Assert.IsNull(sync.Plan);
+        Assert.IsNull(sync.ExecutionPlan);
+    }
+
+    [TestMethod]
+    public async Task Import_SameTitleFromDifferentPaths_KeepsBothSources()
+    {
+        var first = PlaylistWithEntries("Same title", Path.Combine(Path.GetTempPath(), "A", "foo.bplist"), new string('A', 64), 1);
+        var second = PlaylistWithEntries("Same title", Path.Combine(Path.GetTempPath(), "B", "foo.bplist"), new string('B', 64), 1);
+        var viewModel = new PlaylistsViewModel(
+            new BatchImporter([first, second]),
+            new RecordingClient(),
+            new RecordingCache(),
+            new LibraryViewModel(),
+            _ => Task.CompletedTask);
+
+        await viewModel.ImportAsync([first.SourcePath!, second.SourcePath!]);
+
+        Assert.AreEqual(2, viewModel.ImportedPlaylists.Count);
+        Assert.AreEqual(2, viewModel.ImportedPlaylists.Select(playlist => playlist.SourceIdentity!.CanonicalPath).Distinct(SyncExecutionPlan.SourcePathComparer).Count());
+    }
+
     private static T AssertSingle<T>(IReadOnlyList<T> items)
     {
         Assert.HasCount(1, items);
         return items[0];
     }
 
+    private static Playlist PlaylistWithEntries(string title, string path, string sha256, int entryCount)
+    {
+        var playlist = new Playlist(title, sourcePath: path, sourceContentSha256: sha256);
+        for (var index = 0; index < entryCount; index++)
+            playlist.Add(new PlaylistEntry(null, index.ToString("X40"), $"Map {index}"));
+        return playlist;
+    }
+
     private sealed class StubImporter(Playlist playlist) : ILocalPlaylistImporter
     {
         public Task<IReadOnlyList<PlaylistImportResult>> ImportAsync(IEnumerable<string> filePaths, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<PlaylistImportResult>>([new("fixture.bplist", playlist, null)]);
+    }
+
+    private sealed class BatchImporter(params IReadOnlyList<Playlist>[] batches) : ILocalPlaylistImporter
+    {
+        private readonly Queue<IReadOnlyList<Playlist>> _batches = new(batches);
+
+        public Task<IReadOnlyList<PlaylistImportResult>> ImportAsync(IEnumerable<string> filePaths, CancellationToken cancellationToken = default)
+        {
+            var batch = _batches.Dequeue();
+            return Task.FromResult<IReadOnlyList<PlaylistImportResult>>(
+                batch.Select(playlist => new PlaylistImportResult(playlist.SourcePath!, playlist, null)).ToArray());
+        }
     }
 
     private sealed class RecordingClient : IBeatSaverClient
