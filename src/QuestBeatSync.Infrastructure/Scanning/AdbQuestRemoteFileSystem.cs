@@ -1,5 +1,6 @@
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
+using QuestBeatSync.Infrastructure.Adb;
 
 namespace QuestBeatSync.Infrastructure.Scanning;
 

@@ -2,6 +2,7 @@ using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Scanning;
 using QuestBeatSync.Tests.Fixtures;
 using QuestBeatSync.Core.Services;
+using QuestBeatSync.Infrastructure.Adb;
 
 namespace QuestBeatSync.Tests;
 
@@ -43,6 +44,34 @@ public sealed class QuestBeatSaberScannerTests
         Assert.AreEqual(2, result.InstalledMaps.Count(map => map.IdentityStatus == QuestMapIdentityStatus.LocalOnly));
         var identified = result.InstalledMaps.Single(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified);
         Assert.AreEqual("0123456789ABCDEF0123456789ABCDEF01234567", identified.Identity?.Hash);
+    }
+
+    [TestMethod]
+    public async Task ScanAsync_RealCustomLevelsPathPreservesShCArgumentAndDiscoversMaps()
+    {
+        var runner = new RealStyleShellRunner();
+        var options = new AdbQuestTransportOptions
+        {
+            ConfiguredExecutablePath = "test-adb",
+            AppDataToolsDirectory = "unused"
+        };
+        var transport = new AdbQuestTransport(
+            options,
+            new AdbExecutableResolver(path => path == "test-adb", () => null),
+            runner);
+        var scanner = new QuestBeatSaberScanner(new AdbQuestRemoteFileSystem(transport), QuestBeatSaberPaths.Default);
+
+        var result = await scanner.ScanAsync(Device);
+
+        Assert.IsTrue(result.CustomLevelsDetected);
+        Assert.AreEqual(2, result.CustomLevelFolderCount);
+        Assert.AreEqual(2, result.CustomSongCount);
+        Assert.AreEqual(1, result.InstalledMaps.Count(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified));
+        Assert.AreEqual(1, result.InstalledMaps.Count(map => map.IdentityStatus == QuestMapIdentityStatus.LocalOnly));
+        Assert.IsTrue(runner.RemoteCommands.All(command => command.StartsWith("'sh' '-c' '", StringComparison.Ordinal)));
+        Assert.IsTrue(runner.RemoteCommands.Any(command => command.Contains($"test -d '\"'\"'{QuestBeatSaberPaths.Default.CustomLevels}'\"'\"'", StringComparison.Ordinal)));
+        Assert.IsTrue(runner.RemoteCommands.Any(command => command.Contains($"find '\"'\"'{QuestBeatSaberPaths.Default.CustomLevels}'\"'\"' -mindepth 1 -maxdepth 1 -type d -print", StringComparison.Ordinal)));
+        Assert.IsFalse(runner.RemoteCommands.Any(command => command.StartsWith("sh -c test", StringComparison.Ordinal) || command.StartsWith("sh -c find", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -207,5 +236,37 @@ public sealed class QuestBeatSaberScannerTests
     {
         Assert.HasCount(1, items);
         return items[0];
+    }
+
+    private sealed class RealStyleShellRunner : IAdbProcessRunner
+    {
+        private const string Hash = "0123456789ABCDEF0123456789ABCDEF01234567";
+        private static readonly string HashFolder = $"{QuestBeatSaberPaths.Default.CustomLevels}/{Hash}";
+        private static readonly string LocalFolder = $"{QuestBeatSaberPaths.Default.CustomLevels}/Legacy Map";
+        public List<string> RemoteCommands { get; } = [];
+
+        public Task<AdbProcessResult> RunAsync(string executablePath, IReadOnlyList<string> arguments, TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            CollectionAssert.AreEqual(new[] { "-s", Device.Serial, "shell" }, arguments.Take(3).ToArray());
+            Assert.AreEqual(4, arguments.Count, "adb shell must receive exactly one serialized remote command.");
+            var command = arguments[3];
+            RemoteCommands.Add(command);
+
+            if (command.Contains("test -d", StringComparison.Ordinal)) return Success();
+            if (command.Contains(QuestBeatSaberPaths.Default.CustomLevels, StringComparison.Ordinal) && command.Contains("-type d", StringComparison.Ordinal))
+                return Success($"{HashFolder}\n{LocalFolder}\n");
+            if (command.Contains(QuestBeatSaberPaths.Default.Playlists, StringComparison.Ordinal) && command.Contains("-type f", StringComparison.Ordinal))
+                return Success();
+            if (command.Contains("-type f", StringComparison.Ordinal))
+            {
+                var folder = command.Contains(Hash, StringComparison.Ordinal) ? HashFolder : LocalFolder;
+                return Success($"{folder}/Info.dat\n");
+            }
+            if (command.Contains("cat ", StringComparison.Ordinal)) return Success("{\"_songName\":\"Real map\",\"_levelAuthorName\":\"Mapper\"}");
+            return Task.FromResult(new AdbProcessResult(true, false, 1, "", "unexpected remote command"));
+        }
+
+        private static Task<AdbProcessResult> Success(string output = "") =>
+            Task.FromResult(new AdbProcessResult(true, false, 0, output, ""));
     }
 }

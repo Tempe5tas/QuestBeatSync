@@ -72,9 +72,15 @@ public sealed class AdbQuestTransport : IQuestTransport
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(arguments);
+        if (arguments.Count == 0)
+        {
+            throw new ArgumentException("A remote shell command requires at least one argument.", nameof(arguments));
+        }
+
+        var remoteCommand = PosixShellEscaping.SerializeArguments(arguments);
         return RunDeviceCommandAsync(
             device,
-            ["shell", .. arguments],
+            ["shell", remoteCommand],
             _options.ShellCommandTimeout,
             cancellationToken);
     }

@@ -150,6 +150,12 @@
               <TextBlock Text="{Binding Dashboard.BeatSaberStatus}" />
               <TextBlock Text="{Binding Dashboard.SongCoreStatus}" />
               <TextBlock Text="{Binding Dashboard.PlaylistManagerStatus}" />
+              <TextBlock Text="{Binding Library.CustomLevelsDiagnostic, StringFormat='CustomLevels: {0}'}" />
+              <TextBlock Text="{Binding Library.FoldersDiscovered, StringFormat='Folders discovered: {0}'}" />
+              <TextBlock Text="{Binding Library.MapsScanned, StringFormat='Maps scanned: {0}'}" />
+              <TextBlock Text="{Binding Library.HashIdentifiedCount, StringFormat='Hash identified: {0}'}" />
+              <TextBlock Text="{Binding Library.LocalOrUnknownCount, StringFormat='Local / unknown: {0}'}" />
+              <TextBlock Text="{Binding Library.ScanWarningCount, StringFormat='Warnings: {0}'}" />
               <TextBlock
                   IsVisible="{Binding Dashboard.HasEnvironmentError}"
                   Foreground="#E88A8A"

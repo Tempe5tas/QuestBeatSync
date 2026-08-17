@@ -1,5 +1,6 @@
 using QuestBeatSync.Core.Models;
 using QuestBeatSync.Infrastructure.Abstractions;
+using QuestBeatSync.Infrastructure.Adb;
 using QuestBeatSync.Infrastructure.Scanning;
 using System.Collections.Concurrent;
 using System.Text.Json;

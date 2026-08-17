@@ -82,6 +82,12 @@ public sealed class MainWindowViewModelTests
         Assert.AreEqual(1, viewModel.Library.PlaylistCount);
         Assert.HasCount(1, viewModel.Library.InstalledMaps);
         Assert.HasCount(1, viewModel.Library.InstalledPlaylists);
+        Assert.AreEqual("Detected", viewModel.Library.CustomLevelsDiagnostic);
+        Assert.AreEqual(1, viewModel.Library.FoldersDiscovered);
+        Assert.AreEqual(1, viewModel.Library.MapsScanned);
+        Assert.AreEqual(0, viewModel.Library.HashIdentifiedCount);
+        Assert.AreEqual(1, viewModel.Library.LocalOrUnknownCount);
+        Assert.AreEqual(0, viewModel.Library.ScanWarningCount);
     }
 
     [TestMethod]

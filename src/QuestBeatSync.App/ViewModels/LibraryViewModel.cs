@@ -26,6 +26,16 @@ public sealed class LibraryViewModel : ViewModelBase
 
     public int ScanWarningCount => ScanWarnings.Count;
 
+    public string CustomLevelsDiagnostic => !ScanCompleted ? "Not scanned" : _scanResult.CustomLevelsDetected ? "Detected" : "Not detected";
+
+    public int FoldersDiscovered => _scanResult.CustomLevelFolderCount;
+
+    public int MapsScanned => InstalledMaps.Count;
+
+    public int HashIdentifiedCount => InstalledMaps.Count(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified);
+
+    public int LocalOrUnknownCount => InstalledMaps.Count(map => map.IdentityStatus != QuestMapIdentityStatus.HashIdentified);
+
     public bool HasInstalledMaps => InstalledMaps.Count > 0;
 
     public bool HasInstalledPlaylists => InstalledPlaylists.Count > 0;
@@ -53,6 +63,11 @@ public sealed class LibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(SongCount));
         OnPropertyChanged(nameof(PlaylistCount));
         OnPropertyChanged(nameof(ScanWarningCount));
+        OnPropertyChanged(nameof(CustomLevelsDiagnostic));
+        OnPropertyChanged(nameof(FoldersDiscovered));
+        OnPropertyChanged(nameof(MapsScanned));
+        OnPropertyChanged(nameof(HashIdentifiedCount));
+        OnPropertyChanged(nameof(LocalOrUnknownCount));
         OnPropertyChanged(nameof(HasInstalledMaps));
         OnPropertyChanged(nameof(HasInstalledPlaylists));
         OnPropertyChanged(nameof(HasScanWarnings));

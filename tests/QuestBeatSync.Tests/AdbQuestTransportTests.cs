@@ -35,7 +35,7 @@ public sealed class AdbQuestTransportTests
             }
 
             CollectionAssert.AreEqual(
-                new[] { "-s", "192.168.1.100:5555", "shell", "getprop", "ro.product.model" },
+                new[] { "-s", "192.168.1.100:5555", "shell", "'getprop' 'ro.product.model'" },
                 arguments.ToArray());
             return new AdbProcessResult(true, false, 0, "Quest 3\n", string.Empty);
         });
@@ -81,6 +81,27 @@ public sealed class AdbQuestTransportTests
     }
 
     [TestMethod]
+    public async Task ExecuteShellAsync_SerializesRemoteArgvIntoOneEscapedCommand()
+    {
+        var runner = new RecordingProcessRunner();
+        var transport = CreateTransport(runner);
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+
+        await transport.ExecuteShellAsync(device, ["test", "-d", "/path with spaces"]);
+        await transport.ExecuteShellAsync(device, ["sh", "-c", "test -d '/some/path'"]);
+        await transport.ExecuteShellAsync(device, ["sh", "-c", "find '/some/path' -mindepth 1 -maxdepth 1 -type d -print"]);
+        await transport.ExecuteShellAsync(device, ["am", "force-stop", "com.beatgames.beatsaber"]);
+        await transport.ExecuteShellAsync(device, ["printf", "space ; semicolon ' quote \" double"]);
+
+        CollectionAssert.AreEqual(new[] { "-s", "QUEST", "shell", "'test' '-d' '/path with spaces'" }, runner.Arguments[0].ToArray());
+        CollectionAssert.AreEqual(new[] { "-s", "QUEST", "shell", "'sh' '-c' 'test -d '\"'\"'/some/path'\"'\"''" }, runner.Arguments[1].ToArray());
+        CollectionAssert.AreEqual(new[] { "-s", "QUEST", "shell", "'sh' '-c' 'find '\"'\"'/some/path'\"'\"' -mindepth 1 -maxdepth 1 -type d -print'" }, runner.Arguments[2].ToArray());
+        CollectionAssert.AreEqual(new[] { "-s", "QUEST", "shell", "'am' 'force-stop' 'com.beatgames.beatsaber'" }, runner.Arguments[3].ToArray());
+        CollectionAssert.AreEqual(new[] { "-s", "QUEST", "shell", "'printf' 'space ; semicolon '\"'\"' quote \" double'" }, runner.Arguments[4].ToArray());
+        Assert.IsTrue(runner.Arguments.All(arguments => arguments.Count == 4));
+    }
+
+    [TestMethod]
     public async Task Push_ForwardsCallerCancellation()
     {
         var runner = new CancellationProcessRunner();
@@ -112,6 +133,7 @@ public sealed class AdbQuestTransportTests
     private sealed class RecordingProcessRunner : IAdbProcessRunner
     {
         public List<TimeSpan> Timeouts { get; } = [];
+        public List<IReadOnlyList<string>> Arguments { get; } = [];
 
         public Task<AdbProcessResult> RunAsync(
             string executablePath,
@@ -120,6 +142,7 @@ public sealed class AdbQuestTransportTests
             CancellationToken cancellationToken = default)
         {
             Timeouts.Add(timeout);
+            Arguments.Add(arguments.ToArray());
             return Task.FromResult(new AdbProcessResult(true, false, 0, string.Empty, string.Empty));
         }
     }

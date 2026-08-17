@@ -12,7 +12,8 @@ public sealed class QuestBeatSaberScanResult
         bool playlistsDirectoryDetected,
         IEnumerable<QuestInstalledMap>? installedMaps = null,
         IEnumerable<QuestInstalledPlaylist>? installedPlaylists = null,
-        IEnumerable<QuestScanWarning>? warnings = null)
+        IEnumerable<QuestScanWarning>? warnings = null,
+        int? customLevelFolderCount = null)
     {
         BeatSaberDetected = beatSaberDetected;
         SongCoreDetected = songCoreDetected;
@@ -22,6 +23,7 @@ public sealed class QuestBeatSaberScanResult
         InstalledMaps = (installedMaps ?? []).ToArray();
         InstalledPlaylists = (installedPlaylists ?? []).ToArray();
         Warnings = (warnings ?? []).ToArray();
+        CustomLevelFolderCount = customLevelFolderCount ?? InstalledMaps.Count;
     }
 
     public bool BeatSaberDetected { get; }
@@ -39,6 +41,8 @@ public sealed class QuestBeatSaberScanResult
     public IReadOnlyList<QuestInstalledPlaylist> InstalledPlaylists { get; }
 
     public IReadOnlyList<QuestScanWarning> Warnings { get; }
+
+    public int CustomLevelFolderCount { get; }
 
     public int CustomSongCount => InstalledMaps.Count;
 

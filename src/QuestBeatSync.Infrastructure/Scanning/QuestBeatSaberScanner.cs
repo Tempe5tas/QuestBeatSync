@@ -44,9 +44,9 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             cancellationToken).ConfigureAwait(false);
 
         var warnings = new List<QuestScanWarning>();
-        var maps = customLevelsDetected
+        var mapScan = customLevelsDetected
             ? await ScanMapsAsync(device, warnings, cancellationToken).ConfigureAwait(false)
-            : [];
+            : new MapScanResult([], 0);
         var playlists = playlistsDirectoryDetected
             ? await ScanPlaylistsAsync(device, warnings, cancellationToken).ConfigureAwait(false)
             : [];
@@ -57,12 +57,13 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             customLevelsDetected,
             playlistManagerDetected,
             playlistsDirectoryDetected,
-            maps,
+            mapScan.Maps,
             playlists,
-            warnings);
+            warnings,
+            mapScan.FolderCount);
     }
 
-    private async Task<IReadOnlyList<QuestInstalledMap>> ScanMapsAsync(
+    private async Task<MapScanResult> ScanMapsAsync(
         QuestDevice device,
         ICollection<QuestScanWarning> warnings,
         CancellationToken cancellationToken)
@@ -83,7 +84,7 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             maps.Add(await ScanMapAsync(device, folderPath, warnings, cancellationToken).ConfigureAwait(false));
         }
 
-        return maps;
+        return new MapScanResult(maps, folders.Count);
     }
 
     private async Task<QuestInstalledMap> ScanMapAsync(
@@ -283,4 +284,6 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
         var separatorIndex = normalized.LastIndexOf('/');
         return separatorIndex < 0 ? normalized : normalized[(separatorIndex + 1)..];
     }
+
+    private sealed record MapScanResult(IReadOnlyList<QuestInstalledMap> Maps, int FolderCount);
 }
