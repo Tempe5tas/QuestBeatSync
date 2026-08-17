@@ -237,6 +237,30 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
+    public async Task CancellationBeforeLaterGroupedDownload_CancelsEveryPendingOperation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var plan = Plan(
+            Operation(SyncOperationKind.DownloadMap, HashA),
+            Operation(SyncOperationKind.UploadMap, HashA),
+            Operation(SyncOperationKind.DownloadMap, HashB),
+            Operation(SyncOperationKind.UploadMap, HashB));
+        var fixture = CreateFixture(EmptyScan(), plan, lookups: new Dictionary<string, BeatSaverLookupResult>
+        {
+            [HashA] = ExactLookup(HashA), [HashB] = ExactLookup(HashB)
+        });
+        fixture.MapSources.CancelAfterDownloadUsing = cancellation;
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device(), cancellation.Token);
+
+        CollectionAssert.AreEqual(
+            new[] { SyncOperationStatus.Succeeded, SyncOperationStatus.Canceled, SyncOperationStatus.Canceled, SyncOperationStatus.Canceled },
+            result.Operations.Select(operation => operation.Status).ToArray());
+        Assert.IsFalse(result.Operations.Any(operation => operation.Status == SyncOperationStatus.Pending));
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+    }
+
+    [TestMethod]
     public async Task QuestChangeAfterDownloadsRefusesWriteAndKeepsPreparedCache()
     {
         var plan = Plan(
@@ -583,11 +607,13 @@ public sealed class Phase6AExecutionContractTests
     private sealed class RecordingMapSources(List<string> events) : ISyncMapSourceProvider
     {
         public int DownloadCount { get; private set; }
+        public CancellationTokenSource? CancelAfterDownloadUsing { get; set; }
         public Task<string?> GetCachedMapDirectoryAsync(BeatMapIdentity identity, CancellationToken cancellationToken = default) => Task.FromResult<string?>($"C:/cache/{identity.Hash}");
         public Task<string> DownloadExactMapAsync(BeatMapIdentity identity, BeatSaverLookupResult exactLookup, CancellationToken cancellationToken = default)
         {
             DownloadCount++;
             events.Add($"download:{identity.Hash}");
+            CancelAfterDownloadUsing?.Cancel();
             return Task.FromResult($"C:/cache/{identity.Hash}");
         }
     }

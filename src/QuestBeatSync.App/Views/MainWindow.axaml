@@ -128,6 +128,23 @@
 
           <Border Padding="20" CornerRadius="8" Background="#20242D">
             <StackPanel Spacing="10">
+              <TextBlock FontSize="13" Foreground="#AAB1C0" Text="WIRELESS ADB" />
+              <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
+                <TextBox Text="{Binding Dashboard.WirelessHost}" Watermark="Quest IPv4 address or hostname" />
+                <NumericUpDown Grid.Column="1" Minimum="1" Maximum="65535" Value="{Binding Dashboard.WirelessPort}" />
+              </Grid>
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Command="{Binding Dashboard.ConnectCommand}" Content="Connect" />
+                <Button Command="{Binding Dashboard.DisconnectCommand}" Content="Disconnect" />
+                <Button Command="{Binding Dashboard.EnableWirelessCommand}" Content="Enable Wireless ADB on selected USB Quest" />
+              </StackPanel>
+              <TextBlock IsVisible="{Binding Dashboard.HasWirelessStatus}" Text="{Binding Dashboard.WirelessStatus}" TextWrapping="Wrap" />
+              <TextBlock Foreground="#AAB1C0" Text="Classic TCP ADB only; pairing-code workflow is not yet supported." TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <Border Padding="20" CornerRadius="8" Background="#20242D">
+            <StackPanel Spacing="10">
               <TextBlock FontSize="13" Foreground="#AAB1C0" Text="BEAT SABER ENVIRONMENT" />
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding Dashboard.IsEnvironmentScanning}" />
               <TextBlock Text="{Binding Dashboard.BeatSaberStatus}" />
@@ -522,18 +539,29 @@
         <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">
           <Border Padding="20" CornerRadius="8" Background="#20242D">
             <StackPanel Spacing="12">
-              <TextBlock FontSize="20" FontWeight="SemiBold" Text="ADB executable" />
+              <TextBlock FontSize="20" FontWeight="SemiBold" Text="ADB Environment" />
+              <Grid ColumnDefinitions="Auto,20,*" RowDefinitions="Auto,6,Auto,6,Auto,6,Auto">
+                <TextBlock Foreground="#AAB1C0" Text="Status" /><TextBlock Grid.Column="2" Text="{Binding Settings.EnvironmentStatus}" />
+                <TextBlock Grid.Row="2" Foreground="#AAB1C0" Text="Source" /><TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Settings.EnvironmentSource}" />
+                <TextBlock Grid.Row="4" Foreground="#AAB1C0" Text="Version" /><TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding Settings.EnvironmentVersion}" />
+                <TextBlock Grid.Row="6" Foreground="#AAB1C0" Text="Path" /><TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding Settings.EnvironmentPath}" TextWrapping="Wrap" />
+              </Grid>
               <TextBlock
                   Foreground="#AAB1C0"
-                  Text="Optional. QBSync searches this path first, then the app-data tools directory, then PATH."
+                  Text="Choose an existing adb, or explicitly download an independent official Android Platform-Tools copy. QBSync does not modify PATH."
                   TextWrapping="Wrap" />
               <TextBox
                   Text="{Binding Settings.ConfiguredAdbPath}"
                   Watermark="Path to adb or its containing directory" />
               <Button
                   HorizontalAlignment="Left"
-                  Command="{Binding Settings.SaveCommand}"
-                  Content="Save and check devices" />
+                  Click="ChooseAdb_Click"
+                  Content="Choose adb executable..." />
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Command="{Binding Settings.RecheckCommand}" Content="Recheck" />
+                <Button Command="{Binding Settings.DownloadCommand}" Content="Download Platform-Tools" />
+                <Button Command="{Binding Settings.UseAutomaticCommand}" Content="Use automatic selection" />
+              </StackPanel>
               <TextBlock Foreground="#AAB1C0" Text="{Binding Settings.Message}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>

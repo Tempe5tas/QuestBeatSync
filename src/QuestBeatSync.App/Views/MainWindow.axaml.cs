@@ -39,6 +39,22 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void ChooseAdb_Click(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Choose adb executable",
+                AllowMultiple = false
+            });
+            if (files.Count == 1 && DataContext is MainWindowViewModel viewModel)
+                await viewModel.Settings.ChooseExecutableAsync(files[0].Path.LocalPath);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { ReportError("Choose adb executable", exception); }
+    }
+
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         e.DragEffects = e.DataTransfer.Formats.Contains(DataFormat.File)

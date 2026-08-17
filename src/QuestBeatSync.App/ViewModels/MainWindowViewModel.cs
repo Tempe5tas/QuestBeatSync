@@ -10,14 +10,14 @@ public sealed class MainWindowViewModel : ViewModelBase
     private NavigationItemViewModel? _selectedPage;
     private OperationError? _operationError;
 
-    public MainWindowViewModel(IQuestTransport transport, IQuestBeatSaberScanner scanner, ILocalPlaylistImporter playlistImporter, IBeatSaverClient beatSaverClient, IBeatMapCache beatMapCache, AdbQuestTransportOptions adbOptions, AdbSettingsStore settingsStore, SyncExecutor? syncExecutor = null)
+    public MainWindowViewModel(IQuestTransport transport, IQuestBeatSaberScanner scanner, ILocalPlaylistImporter playlistImporter, IBeatSaverClient beatSaverClient, IBeatMapCache beatMapCache, AdbQuestTransportOptions adbOptions, AdbSettingsStore settingsStore, SyncExecutor? syncExecutor = null, AdbEnvironmentManager? adbEnvironment = null, IAdbConnectionService? connectionService = null)
     {
         NavigationItems = [new("Dashboard"), new("Playlists"), new("Library"), new("Sync"), new("Backup"), new("Settings")]; _selectedPage = NavigationItems[0];
         Library = new();
-        Dashboard = new(transport, scanner, Library, exception => ReportAsync("Refresh devices", exception));
+        Dashboard = new(transport, scanner, Library, exception => ReportAsync("Refresh devices", exception), adbEnvironment, connectionService);
         Playlists = new(playlistImporter, beatSaverClient, beatMapCache, Library, exception => ReportAsync("Playlist operation", exception));
         Sync = new(Playlists, Library, beatSaverClient, beatMapCache, exception => ReportAsync("Sync", exception), syncExecutor, () => Dashboard.SelectedDevice, Dashboard.RescanSelectedDeviceAsync);
-        Settings = new(adbOptions, settingsStore, Dashboard.RefreshDevicesAsync, exception => ReportAsync("Save ADB settings", exception));
+        Settings = new(adbOptions, settingsStore, Dashboard.RefreshDevicesAsync, exception => ReportAsync("Save ADB settings", exception), adbEnvironment);
         Dashboard.AdbUnavailable += (_, _) => OpenSettings();
         OpenSettingsCommand = new(OpenSettings);
         DismissOperationErrorCommand = new(() => OperationError = null);
@@ -38,7 +38,7 @@ public sealed class MainWindowViewModel : ViewModelBase
     public OperationError? OperationError { get => _operationError; private set { if (SetProperty(ref _operationError, value)) { OnPropertyChanged(nameof(HasOperationError)); OnPropertyChanged(nameof(OperationErrorText)); } } }
     public bool HasOperationError => OperationError is not null;
     public string? OperationErrorText => OperationError is null ? null : $"{OperationError.Operation}: {OperationError.Message}";
-    public Task InitializeAsync() => Dashboard.InitializeAsync();
+    public async Task InitializeAsync() { if (Settings is not null) await Settings.RecheckCommand.ExecuteAsync(); else await Dashboard.InitializeAsync(); }
     public void ReportOperationError(string operation, Exception exception) => OperationError = new(operation, exception.Message);
 
     private Task ReportAsync(string operation, Exception exception) { ReportOperationError(operation, exception); return Task.CompletedTask; }

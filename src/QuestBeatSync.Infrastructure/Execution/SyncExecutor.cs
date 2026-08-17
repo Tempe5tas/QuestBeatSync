@@ -96,7 +96,7 @@ public sealed class SyncExecutor
         {
             if (cancellationToken.IsCancellationRequested)
             {
-                CancelFrom(index);
+                CancelPending();
                 return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled.").ConfigureAwait(false);
             }
 

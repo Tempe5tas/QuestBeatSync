@@ -30,7 +30,13 @@ public sealed partial class App : Application
                 ConfiguredExecutablePath = settingsStore.LoadConfiguredPath(),
                 AppDataToolsDirectory = Path.Combine(appDataDirectory, "tools")
             };
-            var transport = new AdbQuestTransport(transportOptions);
+            var processRunner = new SystemAdbProcessRunner();
+            var resolver = new AdbExecutableResolver();
+            var environment = new AdbEnvironmentManager(
+                transportOptions, settingsStore, resolver, processRunner,
+                new OfficialAdbDistributionProvider(), new AdbPackageClient(new HttpClient()));
+            var transport = new AdbQuestTransport(transportOptions, resolver, processRunner, environment);
+            var connectionService = new AdbConnectionService(environment, processRunner, transportOptions);
             var scanner = new QuestBeatSaberScanner(
                 new AdbQuestRemoteFileSystem(transport),
                 QuestBeatSaberPaths.Default);
@@ -54,7 +60,9 @@ public sealed partial class App : Application
                 beatMapCache,
                 transportOptions,
                 settingsStore,
-                syncExecutor);
+                syncExecutor,
+                environment,
+                connectionService);
             desktop.MainWindow = new MainWindow
             {
                 DataContext = viewModel

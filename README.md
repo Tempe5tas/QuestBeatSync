@@ -4,6 +4,16 @@
 
 # QuestBeatSync
 
+## ADB bootstrap (Phase 6B.2)
+
+QBSync validates every candidate by running `adb version`. It prefers a valid manually selected executable, then a previously installed QBSync-managed copy, then an existing system/PATH installation. The Settings page shows the selected source, version, and exact executable path.
+
+If ADB is missing, the user may explicitly choose **Download Platform-Tools**. QBSync downloads the official Android SDK Platform-Tools package into its per-user application-data directory, validates the extracted executable, and only then activates the versioned installation. This is never an automatic startup download and does not modify the system PATH, registry, or shell profiles. Manual executable selection and return to automatic selection are also supported.
+
+USB discovery and classic TCP wireless ADB are available in the UI. A selected, connected USB Quest can run `adb -s SERIAL tcpip 5555`; the user then enters the Quest's Wi-Fi address and QBSync runs `adb connect HOST:PORT`, followed by normal `adb devices` discovery. USB and network serials remain distinct device identities. Android pairing-code `adb pair` is not implemented.
+
+The real Quest write path remains **not manually verified** until the documented full-UI single-map canary is actually completed.
+
 QuestBeatSync（QBSync）是一个面向 Windows 和 Linux 的桌面工具，目标是通过 ADB 安全管理 Meta Quest 原生 Beat Saber 的自定义歌曲与 PlaylistManager 歌单。
 
 项目坚持非破坏性、可预览的增量同步：所有可能修改 Quest 文件的操作都必须先生成并展示 `SyncPlan`，正常同步永远不会删除 Quest 上已有的自定义谱。

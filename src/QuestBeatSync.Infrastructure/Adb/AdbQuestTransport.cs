@@ -8,21 +8,24 @@ public sealed class AdbQuestTransport : IQuestTransport
     private readonly AdbQuestTransportOptions _options;
     private readonly AdbExecutableResolver _executableResolver;
     private readonly IAdbProcessRunner _processRunner;
+    private readonly AdbEnvironmentManager? _environmentManager;
 
     public AdbQuestTransport(
         AdbQuestTransportOptions options,
         AdbExecutableResolver? executableResolver = null,
-        IAdbProcessRunner? processRunner = null)
+        IAdbProcessRunner? processRunner = null,
+        AdbEnvironmentManager? environmentManager = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _executableResolver = executableResolver ?? new AdbExecutableResolver();
         _processRunner = processRunner ?? new SystemAdbProcessRunner();
+        _environmentManager = environmentManager;
     }
 
     public async Task<QuestDeviceDiscoveryResult> GetDevicesAsync(
         CancellationToken cancellationToken = default)
     {
-        var executablePath = _executableResolver.Resolve(_options);
+        var executablePath = ResolveExecutable();
         if (executablePath is null)
         {
             return QuestDeviceDiscoveryResult.Failed(
@@ -127,7 +130,7 @@ public sealed class AdbQuestTransport : IQuestTransport
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        var executablePath = _executableResolver.Resolve(_options);
+        var executablePath = ResolveExecutable();
         if (executablePath is null)
         {
             return AdbCommandResult.NotAvailable();
@@ -163,4 +166,8 @@ public sealed class AdbQuestTransport : IQuestTransport
 
         return string.IsNullOrWhiteSpace(result.StandardOutput) ? fallback : result.StandardOutput.Trim();
     }
+
+    private string? ResolveExecutable() => _environmentManager is null
+        ? _executableResolver.Resolve(_options)
+        : _environmentManager.Current.IsReady ? _environmentManager.Current.ExecutablePath : null;
 }
