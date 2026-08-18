@@ -146,7 +146,9 @@
           <Border Padding="20" CornerRadius="8" Background="#20242D">
             <StackPanel Spacing="10">
               <TextBlock FontSize="13" Foreground="#AAB1C0" Text="BEAT SABER ENVIRONMENT" />
+              <Button HorizontalAlignment="Left" Command="{Binding Dashboard.ScanLibraryCommand}" Content="Scan Quest Library" />
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding Dashboard.IsEnvironmentScanning}" />
+              <TextBlock Foreground="#AAB1C0" Text="{Binding Library.ScanStateMessage}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding Dashboard.BeatSaberStatus}" />
               <TextBlock Text="{Binding Dashboard.SongCoreStatus}" />
               <TextBlock Text="{Binding Dashboard.PlaylistManagerStatus}" />

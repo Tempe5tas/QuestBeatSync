@@ -21,6 +21,7 @@ public sealed partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            UiThreadDispatcher.Current = new AvaloniaUiThreadDispatcher();
             var appDataDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "QuestBeatSync");

@@ -44,6 +44,7 @@ public sealed class DashboardViewModel : ViewModelBase
         ConnectCommand = new AsyncRelayCommand(ConnectAsync, () => CanConnect, errorHandler: errorHandler);
         DisconnectCommand = new AsyncRelayCommand(DisconnectAsync, () => CanConnect, errorHandler: errorHandler);
         EnableWirelessCommand = new AsyncRelayCommand(EnableWirelessAsync, () => CanEnableWireless, errorHandler: errorHandler);
+        ScanLibraryCommand = new AsyncRelayCommand(ScanSelectedDeviceAsync, () => CanScanLibrary, errorHandler: errorHandler);
     }
 
     public LibraryViewModel Library { get; }
@@ -52,6 +53,7 @@ public sealed class DashboardViewModel : ViewModelBase
     public AsyncRelayCommand ConnectCommand { get; }
     public AsyncRelayCommand DisconnectCommand { get; }
     public AsyncRelayCommand EnableWirelessCommand { get; }
+    public AsyncRelayCommand ScanLibraryCommand { get; }
     public event EventHandler? AdbUnavailable;
 
     public QuestDevice? SelectedDevice
@@ -61,8 +63,9 @@ public sealed class DashboardViewModel : ViewModelBase
         {
             if (SetProperty(ref _selectedDevice, value))
             {
+                CancelActiveScan();
+                Library.MarkStale(value is null ? "No Quest is selected." : "Selected Quest changed; scan again before planning.");
                 NotifyDevice();
-                _ = RefreshEnvironmentAsync(value);
             }
         }
     }
@@ -102,60 +105,72 @@ public sealed class DashboardViewModel : ViewModelBase
     public bool HasWirelessStatus => !string.IsNullOrWhiteSpace(WirelessStatus);
     public bool CanConnect => !_isConnecting && _connectionService is not null && _adbEnvironment?.Current.IsReady == true;
     public bool CanEnableWireless => !_isConnecting && _connectionService is not null && _adbEnvironment?.Current.IsReady == true && SelectedDevice is { IsConnected: true, TransportKind: QuestTransportKind.Usb };
+    public bool CanScanLibrary => !IsEnvironmentScanning && SelectedDevice?.IsConnected == true;
 
     public async Task InitializeAsync() => await RefreshDevicesAsync();
 
-    public Task RescanSelectedDeviceAsync() => RefreshEnvironmentAsync(SelectedDevice);
+    public async Task<QuestBeatSaberScanResult> ScanSelectedDeviceAsync()
+    {
+        var device = SelectedDevice;
+        if (device?.IsConnected != true) throw new InvalidOperationException("Select a connected Quest before scanning its library.");
+        return await ScanDeviceAsync(device);
+    }
 
     public async Task RefreshDevicesAsync()
     {
-        IsRefreshing = true;
-        ErrorMessage = null;
+        await OnUiThreadAsync(() => { IsRefreshing = true; ErrorMessage = null; });
         try
         {
             var result = await _transport.GetDevicesAsync();
-            _discoveryStatus = result.Status;
-            ErrorMessage = result.ErrorMessage;
-            Replace(Devices, result.Devices);
-            SetSelectedDevice(Devices.Count == 1 ? Devices[0] : null);
-            NotifyDiscovery();
-            if (IsAdbUnavailable) AdbUnavailable?.Invoke(this, EventArgs.Empty);
-            await RefreshEnvironmentAsync(SelectedDevice);
+            var previousSerial = SelectedDevice?.Serial;
+            await OnUiThreadAsync(() =>
+            {
+                _discoveryStatus = result.Status;
+                ErrorMessage = result.ErrorMessage;
+                Replace(Devices, result.Devices);
+                var selection = previousSerial is null ? (Devices.Count == 1 ? Devices[0] : null) : Devices.FirstOrDefault(device => string.Equals(device.Serial, previousSerial, StringComparison.Ordinal));
+                SetSelectedDevice(selection);
+                NotifyDiscovery();
+                if (IsAdbUnavailable) AdbUnavailable?.Invoke(this, EventArgs.Empty);
+            });
         }
         catch (Exception exception)
         {
-            _discoveryStatus = QuestDeviceDiscoveryStatus.Error;
-            ErrorMessage = exception.Message;
-            Devices.Clear();
-            SetSelectedDevice(null);
-            Library.Reset();
+            await OnUiThreadAsync(() =>
+            {
+                _discoveryStatus = QuestDeviceDiscoveryStatus.Error;
+                ErrorMessage = exception.Message;
+                Devices.Clear();
+                SetSelectedDevice(null);
+                Library.MarkStale("Device discovery failed; the displayed library is retained but stale.");
+            });
         }
-        finally { IsRefreshing = false; }
+        finally { await OnUiThreadAsync(() => IsRefreshing = false); }
     }
 
     private async Task ConnectAsync()
     {
         if (!AdbNetworkEndpoint.TryCreate(WirelessHost, WirelessPort, out var endpoint, out var error)) { WirelessStatus = error; return; }
         _isConnecting = true; NotifyWirelessCommands();
-        try { var result = await _connectionService!.ConnectAsync(endpoint!); WirelessStatus = result.IsSuccess ? (result.Outcome == AdbConnectionOutcome.AlreadyConnected ? "Already connected." : "Connected.") : result.ErrorMessage; if (result.IsSuccess) await RefreshDevicesAsync(); }
-        finally { _isConnecting = false; NotifyWirelessCommands(); }
+        try { var result = await _connectionService!.ConnectAsync(endpoint!); await OnUiThreadAsync(() => WirelessStatus = result.IsSuccess ? (result.Outcome == AdbConnectionOutcome.AlreadyConnected ? "Already connected." : "Connected.") : result.ErrorMessage); if (result.IsSuccess) await RefreshDevicesAsync(); }
+        finally { await OnUiThreadAsync(() => { _isConnecting = false; NotifyWirelessCommands(); }); }
     }
 
     private async Task DisconnectAsync()
     {
         if (!AdbNetworkEndpoint.TryCreate(WirelessHost, WirelessPort, out var endpoint, out var error)) { WirelessStatus = error; return; }
         _isConnecting = true; NotifyWirelessCommands();
-        try { var result = await _connectionService!.DisconnectAsync(endpoint!); WirelessStatus = result.IsSuccess ? "Disconnected." : result.ErrorMessage; if (result.IsSuccess) await RefreshDevicesAsync(); }
-        finally { _isConnecting = false; NotifyWirelessCommands(); }
+        try { var result = await _connectionService!.DisconnectAsync(endpoint!); await OnUiThreadAsync(() => WirelessStatus = result.IsSuccess ? "Disconnected." : result.ErrorMessage); if (result.IsSuccess) await RefreshDevicesAsync(); }
+        finally { await OnUiThreadAsync(() => { _isConnecting = false; NotifyWirelessCommands(); }); }
     }
 
     private async Task EnableWirelessAsync()
     {
         var result = await _connectionService!.EnableWirelessAdbAsync(SelectedDevice!, WirelessPort);
-        WirelessStatus = result.IsSuccess ? $"Wireless ADB has been enabled on port {WirelessPort}. Enter the Quest's Wi-Fi IP address to connect." : result.ErrorMessage;
+        await OnUiThreadAsync(() => WirelessStatus = result.IsSuccess ? $"Wireless ADB has been enabled on port {WirelessPort}. Enter the Quest's Wi-Fi IP address to connect." : result.ErrorMessage);
     }
 
-    private async Task RefreshEnvironmentAsync(QuestDevice? device)
+    private async Task<QuestBeatSaberScanResult> ScanDeviceAsync(QuestDevice device)
     {
         var current = new CancellationTokenSource();
         CancellationTokenSource? previous;
@@ -163,33 +178,37 @@ public sealed class DashboardViewModel : ViewModelBase
         try
         {
             try { previous?.Cancel(); } catch (ObjectDisposedException) { }
-            EnvironmentError = null;
-            Library.Reset();
-            SetDetection(false, false, false);
-            if (device?.IsConnected != true) return;
-            IsEnvironmentScanning = true;
+            await OnUiThreadAsync(() => { EnvironmentError = null; IsEnvironmentScanning = true; });
             var result = await _scanner.ScanAsync(device, current.Token);
-            if (!current.IsCancellationRequested)
-            {
-                SetDetection(result.BeatSaberDetected, result.SongCoreDetected, result.PlaylistManagerDetected);
-                Library.Apply(result, scanCompleted: true, device.Serial);
-            }
+            current.Token.ThrowIfCancellationRequested();
+            if (!string.Equals(SelectedDevice?.Serial, device.Serial, StringComparison.Ordinal)) throw new OperationCanceledException("Selected Quest changed during scan.", current.Token);
+            await OnUiThreadAsync(() => { SetDetection(result.BeatSaberDetected, result.SongCoreDetected, result.PlaylistManagerDetected); Library.Apply(result, scanCompleted: true, device.Serial); });
+            return result;
         }
-        catch (OperationCanceledException) when (current.IsCancellationRequested) { }
-        catch (Exception exception) { if (!current.IsCancellationRequested) EnvironmentError = exception.Message; }
+        catch (OperationCanceledException) { await OnUiThreadAsync(() => Library.MarkStale("Quest library scan was canceled; the previous result is retained.")); throw; }
+        catch (Exception exception) { await OnUiThreadAsync(() => { EnvironmentError = exception.Message; Library.MarkScanFailed(exception.Message); }); throw; }
         finally
         {
             var owner = false;
             lock (_scanGate) { if (ReferenceEquals(_scanSource, current)) { _scanSource = null; owner = true; } }
-            if (owner) IsEnvironmentScanning = false;
+            if (owner) await OnUiThreadAsync(() => IsEnvironmentScanning = false);
             current.Dispose();
         }
     }
 
-    private void SetSelectedDevice(QuestDevice? value) { _selectedDevice = value; OnPropertyChanged(nameof(SelectedDevice)); NotifyDevice(); }
+    private void SetSelectedDevice(QuestDevice? value)
+    {
+        var changed = !string.Equals(_selectedDevice?.Serial, value?.Serial, StringComparison.Ordinal);
+        if (changed) CancelActiveScan();
+        _selectedDevice = value;
+        OnPropertyChanged(nameof(SelectedDevice));
+        if (changed) Library.MarkStale(value is null ? "No Quest is selected; the displayed library is retained but stale." : "Device selected. Scan the Quest library before planning.");
+        NotifyDevice();
+    }
     private void SetDetection(bool beatSaber, bool songCore, bool playlistManager) { _beatSaberDetected = beatSaber; _songCoreDetected = songCore; _playlistManagerDetected = playlistManager; OnPropertyChanged(nameof(BeatSaberStatus)); OnPropertyChanged(nameof(SongCoreStatus)); OnPropertyChanged(nameof(PlaylistManagerStatus)); }
     private void NotifyDiscovery() { OnPropertyChanged(nameof(HasDevices)); OnPropertyChanged(nameof(HasMultipleDevices)); OnPropertyChanged(nameof(IsAdbUnavailable)); OnPropertyChanged(nameof(DeviceStatus)); NotifyDevice(); }
     private void NotifyDevice() { OnPropertyChanged(nameof(HasSelectedDevice)); OnPropertyChanged(nameof(SelectedSerial)); OnPropertyChanged(nameof(SelectedConnectionState)); OnPropertyChanged(nameof(SelectedTransport)); OnPropertyChanged(nameof(SelectedModel)); OnPropertyChanged(nameof(DeviceStatus)); NotifyWirelessCommands(); }
-    private void NotifyWirelessCommands() { OnPropertyChanged(nameof(CanConnect)); OnPropertyChanged(nameof(CanEnableWireless)); ConnectCommand.RaiseCanExecuteChanged(); DisconnectCommand.RaiseCanExecuteChanged(); EnableWirelessCommand.RaiseCanExecuteChanged(); }
+    private void NotifyWirelessCommands() { OnPropertyChanged(nameof(CanConnect)); OnPropertyChanged(nameof(CanEnableWireless)); OnPropertyChanged(nameof(CanScanLibrary)); ConnectCommand.RaiseCanExecuteChanged(); DisconnectCommand.RaiseCanExecuteChanged(); EnableWirelessCommand.RaiseCanExecuteChanged(); ScanLibraryCommand.RaiseCanExecuteChanged(); }
+    private void CancelActiveScan() { lock (_scanGate) { try { _scanSource?.Cancel(); } catch (ObjectDisposedException) { } } }
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items) { target.Clear(); foreach (var item in items) target.Add(item); }
 }

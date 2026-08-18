@@ -9,6 +9,7 @@ namespace QuestBeatSync.Tests;
 public sealed class WorkflowViewModelTests
 {
     private const string Hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    private static QuestDevice Connected(string serial) => new(serial, QuestConnectionState.Device, QuestTransportKind.Usb);
 
     [TestMethod]
     public async Task KeyOnlyDiagnosticResult_CannotEnterMapCache()
@@ -41,7 +42,8 @@ public sealed class WorkflowViewModelTests
         var library = new LibraryViewModel();
         library.Apply(QuestBeatSaberScanResult.Empty, scanCompleted: true);
         var playlists = new PlaylistsViewModel(new StubImporter(playlist), client, new RecordingCache(), library, _ => Task.CompletedTask);
-        var sync = new SyncViewModel(playlists, library, client, new RecordingCache(), _ => Task.CompletedTask);
+        var sync = new SyncViewModel(playlists, library, client, new RecordingCache(), _ => Task.CompletedTask,
+            selectedDevice: () => Connected("QUEST"), scanSelectedDevice: () => Task.FromResult(QuestBeatSaberScanResult.Empty));
         await playlists.ImportAsync(["known.bplist"]);
         await playlists.CheckSelectedCommand.ExecuteAsync();
 
@@ -64,7 +66,9 @@ public sealed class WorkflowViewModelTests
         var library = new LibraryViewModel();
         library.Apply(QuestBeatSaberScanResult.Empty, scanCompleted: true, deviceSerial: "QUEST-BOUND");
         var playlists = new PlaylistsViewModel(new StubImporter(playlist), client, new RecordingCache(), library, _ => Task.CompletedTask);
-        var sync = new SyncViewModel(playlists, library, client, new RecordingCache(), _ => Task.CompletedTask);
+        var scanCount = 0;
+        var sync = new SyncViewModel(playlists, library, client, new RecordingCache(), _ => Task.CompletedTask,
+            selectedDevice: () => Connected("QUEST-BOUND"), scanSelectedDevice: () => { scanCount++; return Task.FromResult(QuestBeatSaberScanResult.Empty); });
         await playlists.ImportAsync([playlist.SourceIdentity!.CanonicalPath]);
 
         await sync.BuildCommand.ExecuteAsync();
@@ -72,6 +76,38 @@ public sealed class WorkflowViewModelTests
         Assert.IsNotNull(sync.ExecutionPlan);
         Assert.AreEqual("QUEST-BOUND", sync.ExecutionPlan.Target.DeviceSerial);
         Assert.AreEqual(playlist.SourceIdentity, AssertSingle(sync.ExecutionPlan.PlaylistSources));
+        Assert.AreEqual(1, scanCount);
+    }
+
+    [TestMethod]
+    public async Task SyncPreflight_FailedFreshScanRetainsDisplayedLibraryAndRefusesPlanBeforeResolution()
+    {
+        var playlist = new Playlist("Desired");
+        playlist.Add(new PlaylistEntry("key", Hash, "Desired map"));
+        var previous = new QuestBeatSaberScanResult(true, true, true, true, true,
+            [new QuestInstalledMap("/maps/legacy", "legacy", true, "Legacy", "Mapper", QuestMapIdentityStatus.LocalOnly)]);
+        var library = new LibraryViewModel();
+        library.Apply(previous, scanCompleted: true, deviceSerial: "QUEST");
+        var client = new RecordingClient();
+        var cache = new RecordingCache();
+        var playlists = new PlaylistsViewModel(new StubImporter(playlist), client, cache, library, _ => Task.CompletedTask);
+        Exception? reported = null;
+        var sync = new SyncViewModel(playlists, library, client, cache, exception => { reported = exception; return Task.CompletedTask; },
+            selectedDevice: () => Connected("QUEST"),
+            scanSelectedDevice: () => { library.MarkScanFailed("real scan failed"); return Task.FromException<QuestBeatSaberScanResult>(new IOException("real scan failed")); });
+        await playlists.ImportAsync(["desired.bplist"]);
+        var cacheChecksBeforeBuild = cache.IsCachedCallCount;
+
+        await sync.BuildCommand.ExecuteAsync();
+
+        Assert.IsNull(sync.Plan);
+        Assert.IsNull(sync.ExecutionPlan);
+        Assert.IsNotNull(reported);
+        Assert.AreEqual(1, library.SongCount);
+        Assert.IsTrue(library.ScanCompleted);
+        Assert.IsFalse(library.IsScanCurrent);
+        Assert.AreEqual(cacheChecksBeforeBuild, cache.IsCachedCallCount);
+        Assert.AreEqual(0, client.LookupCallCount);
     }
 
     [TestMethod]
@@ -105,7 +141,8 @@ public sealed class WorkflowViewModelTests
         var client = new RecordingClient();
         var cache = new RecordingCache();
         var playlists = new PlaylistsViewModel(importer, client, cache, library, _ => Task.CompletedTask);
-        var sync = new SyncViewModel(playlists, library, client, cache, _ => Task.CompletedTask);
+        var sync = new SyncViewModel(playlists, library, client, cache, _ => Task.CompletedTask,
+            selectedDevice: () => Connected("QUEST"), scanSelectedDevice: () => Task.FromResult(QuestBeatSaberScanResult.Empty));
         await playlists.ImportAsync([path]);
         await sync.BuildCommand.ExecuteAsync();
         Assert.IsNotNull(sync.ExecutionPlan);
@@ -220,7 +257,8 @@ public sealed class WorkflowViewModelTests
     private sealed class RecordingCache : IBeatMapCache
     {
         public int CacheCallCount { get; private set; }
-        public Task<bool> IsCachedAsync(string hash, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public int IsCachedCallCount { get; private set; }
+        public Task<bool> IsCachedAsync(string hash, CancellationToken cancellationToken = default) { IsCachedCallCount++; return Task.FromResult(false); }
         public Task<BeatMapCacheResult> CacheAsync(BeatSaverLookupResult lookup, CancellationToken cancellationToken = default)
         {
             CacheCallCount++;

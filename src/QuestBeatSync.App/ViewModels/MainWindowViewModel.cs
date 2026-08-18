@@ -16,7 +16,7 @@ public sealed class MainWindowViewModel : ViewModelBase
         Library = new();
         Dashboard = new(transport, scanner, Library, exception => ReportAsync("Refresh devices", exception), adbEnvironment, connectionService);
         Playlists = new(playlistImporter, beatSaverClient, beatMapCache, Library, exception => ReportAsync("Playlist operation", exception));
-        Sync = new(Playlists, Library, beatSaverClient, beatMapCache, exception => ReportAsync("Sync", exception), syncExecutor, () => Dashboard.SelectedDevice, Dashboard.RescanSelectedDeviceAsync);
+        Sync = new(Playlists, Library, beatSaverClient, beatMapCache, exception => ReportAsync("Sync", exception), syncExecutor, () => Dashboard.SelectedDevice, Dashboard.ScanSelectedDeviceAsync);
         Settings = new(adbOptions, settingsStore, Dashboard.RefreshDevicesAsync, exception => ReportAsync("Save ADB settings", exception), adbEnvironment);
         Dashboard.AdbUnavailable += (_, _) => OpenSettings();
         OpenSettingsCommand = new(OpenSettings);
@@ -39,9 +39,9 @@ public sealed class MainWindowViewModel : ViewModelBase
     public bool HasOperationError => OperationError is not null;
     public string? OperationErrorText => OperationError is null ? null : $"{OperationError.Operation}: {OperationError.Message}";
     public async Task InitializeAsync() { if (Settings is not null) await Settings.RecheckCommand.ExecuteAsync(); else await Dashboard.InitializeAsync(); }
-    public void ReportOperationError(string operation, Exception exception) => OperationError = new(operation, exception.Message);
+    public void ReportOperationError(string operation, Exception exception) => _ = OnUiThreadAsync(() => OperationError = new(operation, exception.Message));
 
-    private Task ReportAsync(string operation, Exception exception) { ReportOperationError(operation, exception); return Task.CompletedTask; }
+    private Task ReportAsync(string operation, Exception exception) => OnUiThreadAsync(() => OperationError = new(operation, exception.Message));
     private void OpenSettings() => SelectedPage = NavigationItems.First(item => item.Title == "Settings");
     private void NotifyNavigation() { OnPropertyChanged(nameof(CurrentPageTitle)); OnPropertyChanged(nameof(IsDashboard)); OnPropertyChanged(nameof(IsPlaylists)); OnPropertyChanged(nameof(IsLibrary)); OnPropertyChanged(nameof(IsSync)); OnPropertyChanged(nameof(IsSettings)); OnPropertyChanged(nameof(IsPlaceholderPage)); }
 }

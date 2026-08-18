@@ -37,7 +37,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
-    public async Task InitializeAsync_PublishesReadOnlyScanResultForSingleDevice()
+    public async Task InitializeAsync_SelectsSingleDeviceWithoutScanningLibrary()
     {
         var device = new QuestDevice("USB123", QuestConnectionState.Device, QuestTransportKind.Usb, "Quest 3");
         var map = new QuestInstalledMap(
@@ -63,9 +63,10 @@ public sealed class MainWindowViewModelTests
             [playlist]);
         var options = new AdbQuestTransportOptions { AppDataToolsDirectory = "unused" };
         var settingsStore = new AdbSettingsStore(Path.Combine(Path.GetTempPath(), "qbsync-unused-settings.json"));
+        var scanner = new StubBeatSaberScanner(scanResult);
         var viewModel = new MainWindowViewModel(
             new StubQuestTransport([device]),
-            new StubBeatSaberScanner(scanResult),
+            scanner,
             new StubPlaylistImporter(),
             new FakeBeatSaverClient(),
             new FakeBeatMapCache(),
@@ -75,19 +76,9 @@ public sealed class MainWindowViewModelTests
         await viewModel.InitializeAsync();
 
         Assert.AreEqual(device, viewModel.Dashboard.SelectedDevice);
-        Assert.AreEqual("Beat Saber detected", viewModel.Dashboard.BeatSaberStatus);
-        Assert.AreEqual("SongCore detected", viewModel.Dashboard.SongCoreStatus);
-        Assert.AreEqual("PlaylistManager detected", viewModel.Dashboard.PlaylistManagerStatus);
-        Assert.AreEqual(1, viewModel.Library.SongCount);
-        Assert.AreEqual(1, viewModel.Library.PlaylistCount);
-        Assert.HasCount(1, viewModel.Library.InstalledMaps);
-        Assert.HasCount(1, viewModel.Library.InstalledPlaylists);
-        Assert.AreEqual("Detected", viewModel.Library.CustomLevelsDiagnostic);
-        Assert.AreEqual(1, viewModel.Library.FoldersDiscovered);
-        Assert.AreEqual(1, viewModel.Library.MapsScanned);
-        Assert.AreEqual(0, viewModel.Library.HashIdentifiedCount);
-        Assert.AreEqual(1, viewModel.Library.LocalOrUnknownCount);
-        Assert.AreEqual(0, viewModel.Library.ScanWarningCount);
+        Assert.AreEqual("Beat Saber not scanned", viewModel.Dashboard.BeatSaberStatus);
+        Assert.IsFalse(viewModel.Library.ScanCompleted);
+        Assert.AreEqual(0, scanner.CallCount);
     }
 
     [TestMethod]
@@ -129,7 +120,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
-    public async Task CompletedEnvironmentScan_CanBeFollowedByAnotherDeviceScan()
+    public async Task DeviceSelectionDoesNotScanUntilManualCommandRuns()
     {
         var first = new QuestDevice("FIRST", QuestConnectionState.Device, QuestTransportKind.Usb);
         var second = new QuestDevice("SECOND", QuestConnectionState.Device, QuestTransportKind.Usb);
@@ -137,8 +128,12 @@ public sealed class MainWindowViewModelTests
         var viewModel = CreateViewModel(new StubQuestTransport([first]), scanner);
 
         await viewModel.InitializeAsync();
+        Assert.AreEqual(0, scanner.CallCount);
+        await viewModel.Dashboard.ScanLibraryCommand.ExecuteAsync();
+        Assert.AreEqual(1, scanner.CallCount);
         viewModel.Dashboard.SelectedDevice = second;
-        await scanner.SecondCall.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.AreEqual(1, scanner.CallCount);
+        await viewModel.Dashboard.ScanLibraryCommand.ExecuteAsync();
 
         Assert.AreEqual(2, scanner.CallCount);
         Assert.AreEqual(second, viewModel.Dashboard.SelectedDevice);
@@ -153,11 +148,15 @@ public sealed class MainWindowViewModelTests
         var viewModel = CreateViewModel(new StubQuestTransport([]), scanner);
 
         viewModel.Dashboard.SelectedDevice = first;
+        var firstScan = viewModel.Dashboard.ScanLibraryCommand.ExecuteAsync();
         await scanner.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.Dashboard.SelectedDevice = second;
+        await firstScan;
+        var secondScan = viewModel.Dashboard.ScanLibraryCommand.ExecuteAsync();
         await Task.WhenAll(
             scanner.FirstCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2)),
             scanner.SecondCompleted.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+        await secondScan;
 
         Assert.AreEqual(second, viewModel.Dashboard.SelectedDevice);
         Assert.IsTrue(viewModel.Library.ScanCompleted);
@@ -365,10 +364,14 @@ public sealed class MainWindowViewModelTests
     private sealed class StubBeatSaberScanner(
         QuestBeatSaberScanResult? result = null) : IQuestBeatSaberScanner
     {
+        public int CallCount { get; private set; }
         public Task<QuestBeatSaberScanResult> ScanAsync(
             QuestDevice device,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(result ?? QuestBeatSaberScanResult.Empty);
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return Task.FromResult(result ?? QuestBeatSaberScanResult.Empty);
+        }
     }
 
     private sealed class StubPlaylistImporter(

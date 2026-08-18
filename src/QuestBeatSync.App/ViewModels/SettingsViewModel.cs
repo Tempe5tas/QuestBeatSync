@@ -18,7 +18,6 @@ public sealed class SettingsViewModel : ViewModelBase
         RecheckCommand = new(RecheckAsync, errorHandler: errorHandler);
         DownloadCommand = new(DownloadAsync, () => !IsBusy, errorHandler: errorHandler);
         UseAutomaticCommand = new(UseAutomaticAsync, errorHandler: errorHandler);
-        if (_environment is not null) _environment.StatusChanged += (_, _) => NotifyStatus();
     }
 
     public AsyncRelayCommand SaveCommand { get; }
@@ -41,7 +40,7 @@ public sealed class SettingsViewModel : ViewModelBase
         if (_environment is not null && !string.IsNullOrWhiteSpace(ConfiguredAdbPath))
         {
             var result = await _environment.SelectUserExecutableAsync(ConfiguredAdbPath);
-            Message = result.IsReady ? "ADB executable selected." : result.ValidationError;
+            await OnUiThreadAsync(() => { Message = result.IsReady ? "ADB executable selected." : result.ValidationError; NotifyStatus(); });
             if (result.IsReady) await _refreshDevices();
             return;
         }
@@ -51,8 +50,8 @@ public sealed class SettingsViewModel : ViewModelBase
         await _refreshDevices();
     }
 
-    private async Task RecheckAsync() { if (_environment is not null) await _environment.DiscoverAsync(); NotifyStatus(); await _refreshDevices(); }
-    private async Task DownloadAsync() { if (_environment is null) return; var result = await _environment.InstallManagedAsync(); Message = result.ValidationError ?? (result.IsReady ? "Official Platform-Tools downloaded and configured." : "ADB installation failed."); NotifyStatus(); if (result.IsReady) await _refreshDevices(); }
-    private async Task UseAutomaticAsync() { ConfiguredAdbPath = null; if (_environment is not null) await _environment.UseAutomaticSelectionAsync(); else { _store.SaveConfiguredPath(null); _options.ConfiguredExecutablePath = null; } Message = "Automatic ADB selection enabled."; NotifyStatus(); await _refreshDevices(); }
+    private async Task RecheckAsync() { if (_environment is not null) await _environment.DiscoverAsync(); await OnUiThreadAsync(NotifyStatus); await _refreshDevices(); }
+    private async Task DownloadAsync() { if (_environment is null) return; var install = _environment.InstallManagedAsync(); await OnUiThreadAsync(NotifyStatus); var result = await install; await OnUiThreadAsync(() => { Message = result.ValidationError ?? (result.IsReady ? "Official Platform-Tools downloaded and configured." : "ADB installation failed."); NotifyStatus(); }); if (result.IsReady) await _refreshDevices(); }
+    private async Task UseAutomaticAsync() { await OnUiThreadAsync(() => ConfiguredAdbPath = null); if (_environment is not null) await _environment.UseAutomaticSelectionAsync(); else { _store.SaveConfiguredPath(null); _options.ConfiguredExecutablePath = null; } await OnUiThreadAsync(() => { Message = "Automatic ADB selection enabled."; NotifyStatus(); }); await _refreshDevices(); }
     private void NotifyStatus() { OnPropertyChanged(nameof(IsBusy)); OnPropertyChanged(nameof(EnvironmentStatus)); OnPropertyChanged(nameof(EnvironmentSource)); OnPropertyChanged(nameof(EnvironmentVersion)); OnPropertyChanged(nameof(EnvironmentPath)); OnPropertyChanged(nameof(IsEnvironmentReady)); DownloadCommand.RaiseCanExecuteChanged(); }
 }

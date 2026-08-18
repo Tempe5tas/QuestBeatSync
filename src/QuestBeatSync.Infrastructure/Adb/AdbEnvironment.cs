@@ -82,7 +82,6 @@ public sealed class AdbEnvironmentManager
     }
 
     public AdbEnvironmentStatus Current { get; private set; }
-    public event EventHandler? StatusChanged;
 
     public async Task<AdbEnvironmentStatus> DiscoverAsync(CancellationToken cancellationToken = default)
     {
@@ -121,7 +120,7 @@ public sealed class AdbEnvironmentManager
     {
         var previous = Current;
         var validated = await ValidateCandidateAsync(executablePath, AdbEnvironmentSource.UserSelected, cancellationToken).ConfigureAwait(false);
-        if (!validated.IsReady) { Current = previous; _options.ConfiguredExecutablePath = previous.IsReady ? previous.ExecutablePath : null; StatusChanged?.Invoke(this, EventArgs.Empty); return validated; }
+        if (!validated.IsReady) { Current = previous; _options.ConfiguredExecutablePath = previous.IsReady ? previous.ExecutablePath : null; return validated; }
         _settings.SaveConfiguredPath(validated.ExecutablePath);
         return Publish(validated);
     }
@@ -169,12 +168,11 @@ public sealed class AdbEnvironmentManager
             if (!finalStatus.IsReady) throw new InvalidDataException(finalStatus.ValidationError ?? "Published adb failed validation.");
             return Publish(finalStatus);
         }
-        catch (OperationCanceledException) { CleanupNewPublish(); Current = previous; StatusChanged?.Invoke(this, EventArgs.Empty); throw; }
+        catch (OperationCanceledException) { CleanupNewPublish(); Current = previous; throw; }
         catch (Exception exception)
         {
             CleanupNewPublish();
             Current = previous.IsReady ? previous with { ValidationError = exception.Message } : new(AdbEnvironmentState.DownloadFailed, ValidationError: exception.Message);
-            StatusChanged?.Invoke(this, EventArgs.Empty);
             return Current;
         }
         finally { try { if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true); } catch { } }
@@ -208,7 +206,6 @@ public sealed class AdbEnvironmentManager
     {
         Current = status;
         _options.ConfiguredExecutablePath = status.IsReady ? status.ExecutablePath : null;
-        StatusChanged?.Invoke(this, EventArgs.Empty);
         return status;
     }
 

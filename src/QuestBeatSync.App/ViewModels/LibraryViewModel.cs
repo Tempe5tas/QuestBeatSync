@@ -7,6 +7,8 @@ public sealed class LibraryViewModel : ViewModelBase
 {
     private bool _scanCompleted;
     private QuestBeatSaberScanResult _scanResult = QuestBeatSaberScanResult.Empty;
+    private bool _isScanCurrent;
+    private string? _scanStateMessage;
 
     public ObservableCollection<QuestInstalledMap> InstalledMaps { get; } = [];
 
@@ -19,6 +21,10 @@ public sealed class LibraryViewModel : ViewModelBase
         get => _scanCompleted;
         private set => SetProperty(ref _scanCompleted, value);
     }
+
+    public bool IsScanCurrent { get => _isScanCurrent; private set => SetProperty(ref _isScanCurrent, value); }
+
+    public string ScanStateMessage => _scanStateMessage ?? (IsScanCurrent ? "Scan is current." : ScanCompleted ? "Last successful scan is stale." : "Quest library has not been scanned.");
 
     public int SongCount => InstalledMaps.Count;
 
@@ -48,6 +54,23 @@ public sealed class LibraryViewModel : ViewModelBase
 
     public event EventHandler? Changed;
 
+    public void MarkStale(string? message = null)
+    {
+        IsScanCurrent = false;
+        _scanStateMessage = message;
+        OnPropertyChanged(nameof(ScanStateMessage));
+        OnPropertyChanged(nameof(CustomLevelsDiagnostic));
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void MarkScanFailed(string message)
+    {
+        IsScanCurrent = false;
+        _scanStateMessage = $"Scan failed: {message}";
+        OnPropertyChanged(nameof(ScanStateMessage));
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     public void Reset(bool scanCompleted = false) => Apply(QuestBeatSaberScanResult.Empty, scanCompleted);
 
     public void Apply(QuestBeatSaberScanResult result, bool scanCompleted, string? deviceSerial = null)
@@ -60,6 +83,8 @@ public sealed class LibraryViewModel : ViewModelBase
         Replace(InstalledPlaylists, result.InstalledPlaylists);
         Replace(ScanWarnings, result.Warnings);
         ScanCompleted = scanCompleted;
+        IsScanCurrent = scanCompleted;
+        _scanStateMessage = scanCompleted ? "Scan completed successfully." : null;
         OnPropertyChanged(nameof(SongCount));
         OnPropertyChanged(nameof(PlaylistCount));
         OnPropertyChanged(nameof(ScanWarningCount));
@@ -73,6 +98,7 @@ public sealed class LibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasScanWarnings));
         OnPropertyChanged(nameof(ScanBinding));
         OnPropertyChanged(nameof(ScanResult));
+        OnPropertyChanged(nameof(ScanStateMessage));
         Changed?.Invoke(this, EventArgs.Empty);
     }
 

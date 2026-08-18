@@ -14,7 +14,7 @@ public sealed class SyncViewModel : ViewModelBase
     private readonly IBeatMapCache _cache;
     private readonly SyncExecutor? _executor;
     private readonly Func<QuestDevice?> _selectedDevice;
-    private readonly Func<Task> _rescanSelectedDevice;
+    private readonly Func<Task<QuestBeatSaberScanResult>> _scanSelectedDevice;
     private SyncPlan? _plan;
     private SyncExecutionPlan? _executionPlan;
     private SyncExecutionPlan? _confirmationPlan;
@@ -34,7 +34,7 @@ public sealed class SyncViewModel : ViewModelBase
         Func<Exception, Task> errorHandler,
         SyncExecutor? executor = null,
         Func<QuestDevice?>? selectedDevice = null,
-        Func<Task>? rescanSelectedDevice = null)
+        Func<Task<QuestBeatSaberScanResult>>? scanSelectedDevice = null)
     {
         _playlists = playlists;
         _library = library;
@@ -42,7 +42,7 @@ public sealed class SyncViewModel : ViewModelBase
         _cache = cache;
         _executor = executor;
         _selectedDevice = selectedDevice ?? (() => null);
-        _rescanSelectedDevice = rescanSelectedDevice ?? (() => Task.CompletedTask);
+        _scanSelectedDevice = scanSelectedDevice ?? (() => Task.FromResult(QuestBeatSaberScanResult.Empty));
         BuildCommand = new AsyncRelayCommand(BuildAsync, () => CanBuild && !IsBuilding && !IsExecuting, errorHandler);
         ReviewExecutionCommand = new RelayCommand(RequestConfirmation, () => CanReviewExecution);
         ConfirmExecutionCommand = new AsyncRelayCommand(ExecuteConfirmedAsync, () => CanConfirmExecution, errorHandler);
@@ -64,7 +64,7 @@ public sealed class SyncViewModel : ViewModelBase
     public AsyncRelayCommand ConfirmExecutionCommand { get; }
     public RelayCommand CancelConfirmationCommand { get; }
     public RelayCommand CancelExecutionCommand { get; }
-    public bool CanBuild => _library.ScanCompleted;
+    public bool CanBuild => _selectedDevice()?.IsConnected == true;
     public bool CanReviewExecution => ExecutionPlan is not null && _executor is not null && !IsBuilding && !IsExecuting;
     public bool CanConfirmExecution => IsConfirmationVisible && ReferenceEquals(_confirmationPlan, ExecutionPlan) && !IsExecuting;
     public bool HasPlan => Plan is not null;
@@ -104,6 +104,13 @@ public sealed class SyncViewModel : ViewModelBase
         InvalidatePlan();
         try
         {
+            var selectedDevice = _selectedDevice();
+            if (selectedDevice?.IsConnected != true) throw new InvalidOperationException("Select a connected Quest before building a sync plan.");
+            ResolutionMessage = "Scanning the selected Quest library...";
+            var freshScan = await _scanSelectedDevice();
+            if (_selectedDevice() is not { IsConnected: true } currentDevice || !string.Equals(currentDevice.Serial, selectedDevice.Serial, StringComparison.Ordinal))
+                throw new InvalidOperationException("The selected Quest changed during the planning scan. Rebuild the sync plan.");
+
             var requirements = _playlists.ImportedPlaylists
                 .SelectMany(playlist => playlist.Entries)
                 .Where(entry => entry.Hash is not null)
@@ -113,7 +120,7 @@ public sealed class SyncViewModel : ViewModelBase
             var cached = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var availability = new Dictionary<string, BeatSaverAvailability>(StringComparer.OrdinalIgnoreCase);
             var exactLookups = new Dictionary<string, BeatSaverLookupResult>(StringComparer.OrdinalIgnoreCase);
-            var installed = _library.InstalledMaps
+            var installed = freshScan.InstalledMaps
                 .Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null)
                 .Select(map => map.Identity!.Hash)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -142,7 +149,7 @@ public sealed class SyncViewModel : ViewModelBase
 
             var plan = SyncPlanner.Build(
                 _playlists.ImportedPlaylists,
-                new QuestLibrary(_library.InstalledMaps, _library.InstalledPlaylists),
+                new QuestLibrary(freshScan.InstalledMaps, freshScan.InstalledPlaylists),
                 cached,
                 availability);
             Replace(Operations, plan.Operations);
@@ -152,8 +159,8 @@ public sealed class SyncViewModel : ViewModelBase
                 .Where(source => source is not null)
                 .Cast<PlaylistSourceIdentity>()
                 .ToArray();
-            if (_library.ScanBinding is not null && sources.Length == _playlists.ImportedPlaylists.Count)
-                ExecutionPlan = new SyncExecutionPlan(plan, _library.ScanBinding, sources, exactLookups);
+            if (sources.Length == _playlists.ImportedPlaylists.Count)
+                ExecutionPlan = new SyncExecutionPlan(plan, QuestScanBinding.Capture(selectedDevice.Serial, freshScan), sources, exactLookups);
             ResolutionMessage = $"Resolved {plan.UniqueMapCount} unique maps across {plan.PlaylistReferenceCount} playlist references.";
         }
         finally
@@ -204,7 +211,7 @@ public sealed class SyncViewModel : ViewModelBase
                     item.Status == SyncOperationStatus.Succeeded))
             {
                 ProgressMessage = "Refreshing Quest library after execution...";
-                await _rescanSelectedDevice();
+                await _scanSelectedDevice();
                 var installedHashes = _library.InstalledMaps
                     .Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null)
                     .Select(map => map.Identity!.Hash)

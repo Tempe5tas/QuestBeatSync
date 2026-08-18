@@ -92,6 +92,7 @@ public sealed class SyncExecutionViewModelTests
             target,
             new MemoryJournal(),
             QuestBeatSaberPaths.Default);
+        var scanCount = 0;
         var sync = new SyncViewModel(
             playlists,
             library,
@@ -102,8 +103,9 @@ public sealed class SyncExecutionViewModelTests
             () => Device,
             () =>
             {
-                library.Apply(ScanWithMap(Hash), scanCompleted: true, deviceSerial: Device.Serial);
-                return Task.CompletedTask;
+                var scan = Interlocked.Increment(ref scanCount) == 1 ? EmptyScan() : ScanWithMap(Hash);
+                library.Apply(scan, scanCompleted: true, deviceSerial: Device.Serial);
+                return Task.FromResult(scan);
             });
         return new Fixture(sync, library, target);
     }
