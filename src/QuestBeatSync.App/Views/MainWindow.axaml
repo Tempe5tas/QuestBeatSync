@@ -6,6 +6,8 @@
     xmlns:core="using:QuestBeatSync.Core.Models"
     xmlns:vm="using:QuestBeatSync.App.ViewModels"
     Title="QuestBeatSync"
+    Background="#0B1F24"
+    Foreground="#E8FFFF"
     Width="1000"
     Height="680"
     MinWidth="760"
@@ -14,7 +16,7 @@
     DragDrop.DragOver="OnDragOver"
     DragDrop.Drop="OnDrop">
   <Grid ColumnDefinitions="220,*">
-    <Border Background="#171A21" Padding="20,24">
+    <Border Background="#07161A" Padding="20,24">
       <Grid RowDefinitions="Auto,24,*">
         <StackPanel>
           <TextBlock FontSize="23" FontWeight="SemiBold" Foreground="White" Text="QuestBeatSync" />
@@ -61,11 +63,11 @@
         </Border>
 
         <StackPanel IsVisible="{Binding IsDashboard}" Spacing="18">
-          <Border Padding="20" CornerRadius="8" Background="#20242D">
+          <Border Padding="20" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="14">
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Spacing="6">
-                  <TextBlock FontSize="13" Foreground="#AAB1C0" Text="DEVICE" />
+                  <TextBlock FontSize="13" Foreground="#A9DDE0" Text="DEVICE" />
                   <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding Dashboard.DeviceStatus}" />
                 </StackPanel>
                 <Button
@@ -78,7 +80,7 @@
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding Dashboard.IsRefreshing}" />
 
               <StackPanel IsVisible="{Binding Dashboard.HasDevices}" Spacing="8">
-                <TextBlock Foreground="#AAB1C0" Text="Device" />
+                <TextBlock Foreground="#A9DDE0" Text="Device" />
                 <ComboBox
                     HorizontalAlignment="Stretch"
                     ItemsSource="{Binding Dashboard.Devices}"
@@ -87,7 +89,7 @@
                     <DataTemplate x:DataType="core:QuestDevice">
                       <Grid ColumnDefinitions="*,Auto" MinWidth="420">
                         <TextBlock Text="{Binding Serial}" />
-                        <TextBlock Grid.Column="1" Margin="20,0,0,0" Foreground="#AAB1C0" Text="{Binding ConnectionState}" />
+                        <TextBlock Grid.Column="1" Margin="20,0,0,0" Foreground="#A9DDE0" Text="{Binding ConnectionState}" />
                       </Grid>
                     </DataTemplate>
                   </ComboBox.ItemTemplate>
@@ -102,13 +104,13 @@
                   IsVisible="{Binding Dashboard.HasSelectedDevice}"
                   ColumnDefinitions="Auto,24,*"
                   RowDefinitions="Auto,8,Auto,8,Auto,8,Auto">
-                <TextBlock Foreground="#AAB1C0" Text="Serial" />
+                <TextBlock Foreground="#A9DDE0" Text="Serial" />
                 <TextBlock Grid.Column="2" Text="{Binding Dashboard.SelectedSerial}" />
-                <TextBlock Grid.Row="2" Foreground="#AAB1C0" Text="State" />
+                <TextBlock Grid.Row="2" Foreground="#A9DDE0" Text="State" />
                 <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Dashboard.SelectedConnectionState}" />
-                <TextBlock Grid.Row="4" Foreground="#AAB1C0" Text="Transport" />
+                <TextBlock Grid.Row="4" Foreground="#A9DDE0" Text="Transport" />
                 <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding Dashboard.SelectedTransport}" />
-                <TextBlock Grid.Row="6" Foreground="#AAB1C0" Text="Android model" />
+                <TextBlock Grid.Row="6" Foreground="#A9DDE0" Text="Android model" />
                 <TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding Dashboard.SelectedModel}" />
               </Grid>
 
@@ -126,9 +128,9 @@
             </StackPanel>
           </Border>
 
-          <Border Padding="20" CornerRadius="8" Background="#20242D">
+          <Border Padding="20" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="10">
-              <TextBlock FontSize="13" Foreground="#AAB1C0" Text="WIRELESS ADB" />
+              <TextBlock FontSize="13" Foreground="#A9DDE0" Text="WIRELESS ADB" />
               <Grid ColumnDefinitions="*,120" ColumnSpacing="12">
                 <TextBox Text="{Binding Dashboard.WirelessHost}" Watermark="Quest IPv4 address or hostname" />
                 <NumericUpDown Grid.Column="1" Minimum="1" Maximum="65535" Value="{Binding Dashboard.WirelessPort}" />
@@ -139,16 +141,16 @@
                 <Button Command="{Binding Dashboard.EnableWirelessCommand}" Content="Enable Wireless ADB on selected USB Quest" />
               </StackPanel>
               <TextBlock IsVisible="{Binding Dashboard.HasWirelessStatus}" Text="{Binding Dashboard.WirelessStatus}" TextWrapping="Wrap" />
-              <TextBlock Foreground="#AAB1C0" Text="Classic TCP ADB only; pairing-code workflow is not yet supported." TextWrapping="Wrap" />
+              <TextBlock Foreground="#A9DDE0" Text="Classic TCP ADB only; pairing-code workflow is not yet supported." TextWrapping="Wrap" />
             </StackPanel>
           </Border>
 
-          <Border Padding="20" CornerRadius="8" Background="#20242D">
+          <Border Padding="20" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="10">
-              <TextBlock FontSize="13" Foreground="#AAB1C0" Text="BEAT SABER ENVIRONMENT" />
+              <TextBlock FontSize="13" Foreground="#A9DDE0" Text="BEAT SABER ENVIRONMENT" />
               <Button HorizontalAlignment="Left" Command="{Binding Dashboard.ScanLibraryCommand}" Content="Scan Quest Library" />
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding Dashboard.IsEnvironmentScanning}" />
-              <TextBlock Foreground="#AAB1C0" Text="{Binding Library.ScanStateMessage}" TextWrapping="Wrap" />
+              <TextBlock Foreground="#A9DDE0" Text="{Binding Library.ScanStateMessage}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding Dashboard.BeatSaberStatus}" />
               <TextBlock Text="{Binding Dashboard.SongCoreStatus}" />
               <TextBlock Text="{Binding Dashboard.PlaylistManagerStatus}" />
@@ -171,15 +173,15 @@
           </Border>
 
           <Grid ColumnDefinitions="*,18,*">
-            <Border Padding="20" CornerRadius="8" Background="#20242D">
+            <Border Padding="20" CornerRadius="8" Background="#12363B">
               <StackPanel Spacing="6">
-                <TextBlock FontSize="13" Foreground="#AAB1C0" Text="LIBRARY" />
+                <TextBlock FontSize="13" Foreground="#A9DDE0" Text="LIBRARY" />
                 <TextBlock FontSize="24" FontWeight="SemiBold" Text="{Binding Library.SongCount, StringFormat='{}{0} songs'}" />
               </StackPanel>
             </Border>
-            <Border Grid.Column="2" Padding="20" CornerRadius="8" Background="#20242D">
+            <Border Grid.Column="2" Padding="20" CornerRadius="8" Background="#12363B">
               <StackPanel Spacing="6">
-                <TextBlock FontSize="13" Foreground="#AAB1C0" Text="PLAYLISTS" />
+                <TextBlock FontSize="13" Foreground="#A9DDE0" Text="PLAYLISTS" />
                 <TextBlock FontSize="24" FontWeight="SemiBold" Text="{Binding Library.PlaylistCount, StringFormat='{}{0} playlists'}" />
               </StackPanel>
             </Border>
@@ -187,8 +189,8 @@
         </StackPanel>
 
         <StackPanel IsVisible="{Binding IsLibrary}" Spacing="14">
-          <TextBlock Foreground="#AAB1C0" Text="Read-only view of CustomLevels" />
-          <Border Padding="16" CornerRadius="8" Background="#20242D">
+          <TextBlock Foreground="#A9DDE0" Text="Read-only view of CustomLevels" />
+          <Border Padding="16" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="8">
               <Grid ColumnDefinitions="2*,2*,1.5*,Auto,1.2*" ColumnSpacing="16">
                 <TextBlock FontWeight="SemiBold" Text="Folder" />
@@ -197,11 +199,11 @@
                 <TextBlock Grid.Column="3" FontWeight="SemiBold" Text="Info.dat" />
                 <TextBlock Grid.Column="4" FontWeight="SemiBold" Text="Identity" />
               </Grid>
-              <Border Height="1" Background="#3A404D" />
+              <Border Height="1" Background="#2C7378" />
               <TextBlock
                   IsVisible="{Binding !Library.HasInstalledMaps}"
                   Margin="0,10"
-                  Foreground="#8C94A5"
+                  Foreground="#86B7BA"
                   Text="No custom songs found." />
               <ItemsControl ItemsSource="{Binding Library.InstalledMaps}">
                 <ItemsControl.ItemTemplate>
@@ -224,7 +226,7 @@
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel>
               <TextBlock FontSize="20" FontWeight="SemiBold" Text="Local playlist imports" />
-              <TextBlock Foreground="#AAB1C0" Text="Preview only — nothing is uploaded to Quest." />
+              <TextBlock Foreground="#A9DDE0" Text="Preview only — nothing is uploaded to Quest." />
             </StackPanel>
             <Button
                 Grid.Column="1"
@@ -236,7 +238,7 @@
           <Border Padding="18" CornerRadius="8" BorderBrush="#596273" BorderThickness="1">
             <StackPanel HorizontalAlignment="Center" Spacing="6">
               <TextBlock FontWeight="SemiBold" Text="Drop one or more .bplist files here" />
-              <TextBlock Foreground="#8C94A5" Text="BeatSaver playlists are read as UTF-8" />
+              <TextBlock Foreground="#86B7BA" Text="BeatSaver playlists are read as UTF-8" />
               <ProgressBar Width="260" IsIndeterminate="True" IsVisible="{Binding Playlists.IsImporting}" />
             </StackPanel>
           </Border>
@@ -248,27 +250,27 @@
               TextWrapping="Wrap" />
 
           <Grid IsVisible="{Binding Playlists.HasImportedPlaylists}" ColumnDefinitions="*,12,*,12,*">
-            <Border Padding="14" CornerRadius="8" Background="#20242D">
+            <Border Padding="14" CornerRadius="8" Background="#12363B">
               <StackPanel Spacing="4">
-                <TextBlock Foreground="#AAB1C0" Text="TOTAL PLAYLIST REFERENCES" />
+                <TextBlock Foreground="#A9DDE0" Text="TOTAL PLAYLIST REFERENCES" />
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Playlists.TotalPlaylistReferences}" />
               </StackPanel>
             </Border>
-            <Border Grid.Column="2" Padding="14" CornerRadius="8" Background="#20242D">
+            <Border Grid.Column="2" Padding="14" CornerRadius="8" Background="#12363B">
               <StackPanel Spacing="4">
-                <TextBlock Foreground="#AAB1C0" Text="UNIQUE REQUIRED HASHES" />
+                <TextBlock Foreground="#A9DDE0" Text="UNIQUE REQUIRED HASHES" />
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Playlists.UniqueRequiredHashes}" />
               </StackPanel>
             </Border>
-            <Border Grid.Column="4" Padding="14" CornerRadius="8" Background="#20242D">
+            <Border Grid.Column="4" Padding="14" CornerRadius="8" Background="#12363B">
               <StackPanel Spacing="4">
-                <TextBlock Foreground="#AAB1C0" Text="DUPLICATE REFERENCES" />
+                <TextBlock Foreground="#A9DDE0" Text="DUPLICATE REFERENCES" />
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Playlists.DuplicateReferences}" />
               </StackPanel>
             </Border>
           </Grid>
 
-          <Border IsVisible="{Binding Playlists.HasImportedPlaylists}" Padding="16" CornerRadius="8" Background="#20242D">
+          <Border IsVisible="{Binding Playlists.HasImportedPlaylists}" Padding="16" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="14">
               <ComboBox ItemsSource="{Binding Playlists.ImportedPlaylists}" SelectedItem="{Binding Playlists.SelectedPlaylist}">
                 <ComboBox.ItemTemplate>
@@ -280,7 +282,7 @@
 
               <StackPanel IsVisible="{Binding Playlists.HasSelectedPlaylist}" Spacing="4">
                 <TextBlock FontSize="26" FontWeight="SemiBold" Text="{Binding Playlists.SelectedPlaylist.Name}" />
-                <TextBlock FontSize="16" Foreground="#AAB1C0" Text="{Binding Playlists.SelectedAuthorDisplay}" />
+                <TextBlock FontSize="16" Foreground="#A9DDE0" Text="{Binding Playlists.SelectedAuthorDisplay}" />
                 <StackPanel Margin="0,8,0,0" Orientation="Horizontal" Spacing="18">
                   <TextBlock Text="{Binding Playlists.SelectedEntryCount, StringFormat='{}{0} entries'}" />
                   <TextBlock Text="{Binding Playlists.SelectedUniqueHashCount, StringFormat='{}{0} unique hashes'}" />
@@ -302,7 +304,7 @@
                 <TextBlock Grid.Column="5" FontWeight="SemiBold" Text="Cached locally" />
                 <TextBlock Grid.Column="6" FontWeight="SemiBold" Text="Availability" />
               </Grid>
-              <Border Height="1" Background="#3A404D" />
+              <Border Height="1" Background="#2C7378" />
               <ItemsControl ItemsSource="{Binding Playlists.SelectedEntries}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:PlaylistEntryStatusViewModel">
@@ -321,8 +323,8 @@
             </StackPanel>
           </Border>
 
-          <TextBlock Foreground="#AAB1C0" Text="Read-only view of PlaylistManager playlists" />
-          <Border Padding="16" CornerRadius="8" Background="#20242D">
+          <TextBlock Foreground="#A9DDE0" Text="Read-only view of PlaylistManager playlists" />
+          <Border Padding="16" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="8">
               <Grid ColumnDefinitions="2*,2*,Auto,Auto,2*" ColumnSpacing="16">
                 <TextBlock FontWeight="SemiBold" Text="Filename" />
@@ -331,11 +333,11 @@
                 <TextBlock Grid.Column="3" FontWeight="SemiBold" Text="Format" />
                 <TextBlock Grid.Column="4" FontWeight="SemiBold" Text="Warning" />
               </Grid>
-              <Border Height="1" Background="#3A404D" />
+              <Border Height="1" Background="#2C7378" />
               <TextBlock
                   IsVisible="{Binding !Library.HasInstalledPlaylists}"
                   Margin="0,10"
-                  Foreground="#8C94A5"
+                  Foreground="#86B7BA"
                   Text="No playlists found." />
               <ItemsControl ItemsSource="{Binding Library.InstalledPlaylists}">
                 <ItemsControl.ItemTemplate>
@@ -358,7 +360,7 @@
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel Spacing="4">
               <TextBlock FontSize="20" FontWeight="SemiBold" Text="Sync preview" />
-              <TextBlock Foreground="#AAB1C0" Text="Generate, inspect, explicitly confirm, then execute the bound plan." />
+              <TextBlock Foreground="#A9DDE0" Text="Generate, inspect, explicitly confirm, then execute the bound plan." />
             </StackPanel>
             <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
               <Button Command="{Binding Sync.BuildCommand}" Content="Build Sync Plan" />
@@ -377,11 +379,11 @@
           <ProgressBar IsIndeterminate="True" IsVisible="{Binding Sync.IsBuilding}" />
           <TextBlock
               IsVisible="{Binding Sync.IsBuilding}"
-              Foreground="#AAB1C0"
+              Foreground="#A9DDE0"
               Text="{Binding Sync.ResolutionMessage}" />
           <TextBlock
               IsVisible="{Binding Sync.HasPlan}"
-              Foreground="#83C98E"
+              Foreground="#55D98A"
               Text="{Binding Sync.ResolutionMessage}" />
           <TextBlock
               IsVisible="{Binding !Sync.CanBuild}"
@@ -389,59 +391,59 @@
               Text="A completed Quest library scan is required before generating a trustworthy plan." />
           <TextBlock
               IsVisible="{Binding !Sync.HasPlan}"
-              Foreground="#8C94A5"
+              Foreground="#86B7BA"
               Text="No plan generated yet. Import desired playlists, inspect availability, then generate a preview." />
 
           <StackPanel IsVisible="{Binding Sync.HasPlan}" Spacing="14">
             <Grid ColumnDefinitions="*,10,*,10,*,10,*">
-              <Border Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="PLAYLIST REFERENCES" />
+                  <TextBlock Foreground="#A9DDE0" Text="PLAYLIST REFERENCES" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.PlaylistReferences}" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="UNIQUE MAPS" />
+                  <TextBlock Foreground="#A9DDE0" Text="UNIQUE MAPS" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.UniqueMaps}" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="4" Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Grid.Column="4" Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="ALREADY INSTALLED" />
+                  <TextBlock Foreground="#A9DDE0" Text="ALREADY INSTALLED" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.AlreadyInstalled}" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="6" Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Grid.Column="6" Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="DOWNLOAD REQUIRED" />
+                  <TextBlock Foreground="#A9DDE0" Text="DOWNLOAD REQUIRED" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.DownloadRequired}" />
                 </StackPanel>
               </Border>
             </Grid>
 
             <Grid ColumnDefinitions="*,10,*,10,*,10,*">
-              <Border Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="UPLOAD REQUIRED" />
+                  <TextBlock Foreground="#A9DDE0" Text="UPLOAD REQUIRED" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.UploadRequired}" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="UNAVAILABLE" />
+                  <TextBlock Foreground="#A9DDE0" Text="UNAVAILABLE" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.Unavailable}" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="4" Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Grid.Column="4" Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="UNKNOWN" />
+                  <TextBlock Foreground="#A9DDE0" Text="UNKNOWN" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.Unknown}" />
                 </StackPanel>
               </Border>
-              <Border Grid.Column="6" Padding="12" CornerRadius="8" Background="#20242D">
+              <Border Grid.Column="6" Padding="12" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="3">
-                  <TextBlock Foreground="#AAB1C0" Text="QUEST-ONLY PRESERVED" />
+                  <TextBlock Foreground="#A9DDE0" Text="QUEST-ONLY PRESERVED" />
                   <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding Sync.QuestOnlyPreserved}" />
                 </StackPanel>
               </Border>
@@ -451,7 +453,7 @@
               <TextBlock
                   FontSize="18"
                   FontWeight="SemiBold"
-                  Foreground="#83C98E"
+                  Foreground="#55D98A"
                   Text="{Binding Sync.DeletionCount, StringFormat='{}Deletion: {0}'}" />
             </Border>
 
@@ -472,7 +474,7 @@
                 <TextBlock Text="{Binding Sync.QuestOnlyPreserved, StringFormat='{}Quest-only maps preserved: {0}'}" />
                 <TextBlock Text="{Binding Sync.Unavailable, StringFormat='{}Unavailable maps skipped: {0}'}" />
                 <TextBlock Text="{Binding Sync.Unknown, StringFormat='{}Unknown maps skipped: {0}'}" />
-                <TextBlock FontSize="18" FontWeight="Bold" Foreground="#83C98E" Text="Maps to delete: 0" />
+                <TextBlock FontSize="18" FontWeight="Bold" Foreground="#55D98A" Text="Maps to delete: 0" />
                 <TextBlock Foreground="#D7A95B" Text="Beat Saber will be force-stopped. It will not be relaunched automatically." TextWrapping="Wrap" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
                   <Button Command="{Binding Sync.ConfirmExecutionCommand}" Content="Confirm and Execute" />
@@ -482,14 +484,14 @@
             </Border>
 
             <Expander Header="Operations" IsExpanded="True">
-              <Border Margin="0,10,0,0" Padding="14" CornerRadius="8" Background="#20242D">
+              <Border Margin="0,10,0,0" Padding="14" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="8">
                   <Grid ColumnDefinitions="1.2*,2*,4*" ColumnSpacing="16">
                     <TextBlock FontWeight="SemiBold" Text="Operation" />
                     <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="Hash / playlist" />
                     <TextBlock Grid.Column="2" FontWeight="SemiBold" Text="Details" />
                   </Grid>
-                  <Border Height="1" Background="#3A404D" />
+                  <Border Height="1" Background="#2C7378" />
                   <ItemsControl ItemsSource="{Binding Sync.Operations}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="core:SyncOperation">
@@ -497,7 +499,7 @@
                           <TextBlock Text="{Binding Kind}" />
                           <StackPanel Grid.Column="1">
                             <TextBlock Text="{Binding MapIdentity.Hash}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Foreground="#AAB1C0" Text="{Binding PlaylistName}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Foreground="#A9DDE0" Text="{Binding PlaylistName}" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <TextBlock Grid.Column="2" Text="{Binding Description}" TextWrapping="Wrap" />
                         </Grid>
@@ -509,20 +511,20 @@
             </Expander>
           </StackPanel>
 
-          <Border IsVisible="{Binding Sync.IsExecuting}" Padding="16" CornerRadius="8" Background="#20242D">
+          <Border IsVisible="{Binding Sync.IsExecuting}" Padding="16" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="10">
               <ProgressBar IsIndeterminate="True" />
               <TextBlock Text="{Binding Sync.ProgressMessage}" TextWrapping="Wrap" />
               <Button HorizontalAlignment="Left" Command="{Binding Sync.CancelExecutionCommand}" Content="Cancel remaining work" />
-              <TextBlock Foreground="#AAB1C0" Text="Completed operations are preserved; cancel does not roll them back." />
+              <TextBlock Foreground="#A9DDE0" Text="Completed operations are preserved; cancel does not roll them back." />
             </StackPanel>
           </Border>
 
-          <Border IsVisible="{Binding Sync.HasResult}" Padding="16" CornerRadius="8" Background="#20242D">
+          <Border IsVisible="{Binding Sync.HasResult}" Padding="16" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="10">
               <TextBlock FontSize="19" FontWeight="SemiBold" Text="Execution result" />
               <TextBlock Text="{Binding Sync.ResultSummary}" TextWrapping="Wrap" />
-              <TextBlock Foreground="#83C98E" Text="Start Beat Saber to let SongCore and PlaylistManager load transferred content." TextWrapping="Wrap" />
+              <TextBlock Foreground="#55D98A" Text="Start Beat Saber to let SongCore and PlaylistManager load transferred content." TextWrapping="Wrap" />
               <ItemsControl ItemsSource="{Binding Sync.OperationResults}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="core:SyncOperationResult">
@@ -545,17 +547,17 @@
         </StackPanel>
 
         <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">
-          <Border Padding="20" CornerRadius="8" Background="#20242D">
+          <Border Padding="20" CornerRadius="8" Background="#12363B">
             <StackPanel Spacing="12">
               <TextBlock FontSize="20" FontWeight="SemiBold" Text="ADB Environment" />
               <Grid ColumnDefinitions="Auto,20,*" RowDefinitions="Auto,6,Auto,6,Auto,6,Auto">
-                <TextBlock Foreground="#AAB1C0" Text="Status" /><TextBlock Grid.Column="2" Text="{Binding Settings.EnvironmentStatus}" />
-                <TextBlock Grid.Row="2" Foreground="#AAB1C0" Text="Source" /><TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Settings.EnvironmentSource}" />
-                <TextBlock Grid.Row="4" Foreground="#AAB1C0" Text="Version" /><TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding Settings.EnvironmentVersion}" />
-                <TextBlock Grid.Row="6" Foreground="#AAB1C0" Text="Path" /><TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding Settings.EnvironmentPath}" TextWrapping="Wrap" />
+                <TextBlock Foreground="#A9DDE0" Text="Status" /><TextBlock Grid.Column="2" Text="{Binding Settings.EnvironmentStatus}" />
+                <TextBlock Grid.Row="2" Foreground="#A9DDE0" Text="Source" /><TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding Settings.EnvironmentSource}" />
+                <TextBlock Grid.Row="4" Foreground="#A9DDE0" Text="Version" /><TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding Settings.EnvironmentVersion}" />
+                <TextBlock Grid.Row="6" Foreground="#A9DDE0" Text="Path" /><TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding Settings.EnvironmentPath}" TextWrapping="Wrap" />
               </Grid>
               <TextBlock
-                  Foreground="#AAB1C0"
+                  Foreground="#A9DDE0"
                   Text="Choose an existing adb, or explicitly download an independent official Android Platform-Tools copy. QBSync does not modify PATH."
                   TextWrapping="Wrap" />
               <TextBox
@@ -570,7 +572,7 @@
                 <Button Command="{Binding Settings.DownloadCommand}" Content="Download Platform-Tools" />
                 <Button Command="{Binding Settings.UseAutomaticCommand}" Content="Use automatic selection" />
               </StackPanel>
-              <TextBlock Foreground="#AAB1C0" Text="{Binding Settings.Message}" TextWrapping="Wrap" />
+              <TextBlock Foreground="#A9DDE0" Text="{Binding Settings.Message}" TextWrapping="Wrap" />
             </StackPanel>
           </Border>
         </StackPanel>
@@ -578,7 +580,7 @@
         <TextBlock
             IsVisible="{Binding IsPlaceholderPage}"
             FontSize="16"
-            Foreground="#8C94A5"
+            Foreground="#86B7BA"
             Text="This section will be implemented in a later phase." />
       </StackPanel>
     </ScrollViewer>
