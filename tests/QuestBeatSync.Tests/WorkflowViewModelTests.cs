@@ -111,6 +111,30 @@ public sealed class WorkflowViewModelTests
     }
 
     [TestMethod]
+    public async Task SyncPreview_ShowsOnlyOperationsThatPerformWork()
+    {
+        const string questOnlyHash = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+        var playlist = new Playlist("Desired");
+        playlist.Add(new PlaylistEntry("key", Hash, "Missing map"));
+        var scan = new QuestBeatSaberScanResult(true, true, true, true, true,
+            [new QuestInstalledMap($"/maps/{questOnlyHash}", questOnlyHash, true, "Quest only", "Mapper", QuestMapIdentityStatus.HashIdentified, new BeatMapIdentity(questOnlyHash))]);
+        var library = new LibraryViewModel();
+        var client = new RecordingClient();
+        var cache = new RecordingCache();
+        var playlists = new PlaylistsViewModel(new StubImporter(playlist), client, cache, library, _ => Task.CompletedTask);
+        var sync = new SyncViewModel(playlists, library, client, cache, _ => Task.CompletedTask,
+            selectedDevice: () => Connected("QUEST"), scanSelectedDevice: () => Task.FromResult(scan));
+        await playlists.ImportAsync(["desired.bplist"]);
+
+        await sync.BuildCommand.ExecuteAsync();
+
+        Assert.AreEqual(1, sync.QuestOnlyPreserved);
+        Assert.IsTrue(sync.Operations.All(operation => operation.Kind is SyncOperationKind.DownloadMap or SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist));
+        Assert.IsFalse(sync.Operations.Any(operation => operation.Kind is SyncOperationKind.KeepExisting or SyncOperationKind.PreserveQuestOnly));
+        Assert.IsTrue(sync.Plan!.Operations.Count > sync.Operations.Count);
+    }
+
+    [TestMethod]
     public async Task Reimport_SamePathAndSameHash_IsANoOp()
     {
         var path = Path.Combine(Path.GetTempPath(), "same-source.bplist");

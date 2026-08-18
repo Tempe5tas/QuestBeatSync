@@ -483,7 +483,41 @@
               </StackPanel>
             </Border>
 
-            <Expander Header="Operations" IsExpanded="True">
+            <Border IsVisible="{Binding Sync.IsExecuting}" Padding="16" CornerRadius="8" Background="#12363B">
+              <StackPanel Spacing="10">
+                <ProgressBar IsIndeterminate="True" />
+                <TextBlock Text="{Binding Sync.ProgressMessage}" TextWrapping="Wrap" />
+                <Button HorizontalAlignment="Left" Command="{Binding Sync.CancelExecutionCommand}" Content="Cancel remaining work" />
+                <TextBlock Foreground="#A9DDE0" Text="Completed operations are preserved; cancel does not roll them back." />
+              </StackPanel>
+            </Border>
+
+            <Border IsVisible="{Binding Sync.HasResult}" Padding="16" CornerRadius="8" Background="#12363B">
+              <StackPanel Spacing="10">
+                <TextBlock FontSize="19" FontWeight="SemiBold" Text="Execution result" />
+                <TextBlock Text="{Binding Sync.ResultSummary}" TextWrapping="Wrap" />
+                <TextBlock Foreground="#55D98A" Text="Start Beat Saber to let SongCore and PlaylistManager load transferred content." TextWrapping="Wrap" />
+                <ItemsControl ItemsSource="{Binding Sync.OperationResults}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="core:SyncOperationResult">
+                      <Grid Margin="0,4" ColumnDefinitions="1.2*,1.2*,4*" ColumnSpacing="12">
+                        <TextBlock Text="{Binding Status}" />
+                        <TextBlock Grid.Column="1" Text="{Binding Operation.Kind}" />
+                        <TextBlock Grid.Column="2" Text="{Binding Message}" TextWrapping="Wrap" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border IsVisible="{Binding Sync.HasDiagnosticWarnings}" Padding="10" Background="#31281D" CornerRadius="6">
+                  <StackPanel Spacing="4">
+                    <TextBlock FontWeight="SemiBold" Foreground="#D7A95B" Text="Diagnostic warnings" />
+                    <TextBlock Foreground="#D7A95B" Text="{Binding Sync.DiagnosticWarningsText}" TextWrapping="Wrap" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <Expander Header="{Binding Sync.ActionOperationsHeader}" IsExpanded="True">
               <Border Margin="0,10,0,0" Padding="14" CornerRadius="8" Background="#12363B">
                 <StackPanel Spacing="8">
                   <Grid ColumnDefinitions="1.2*,2*,4*" ColumnSpacing="16">
@@ -511,39 +545,6 @@
             </Expander>
           </StackPanel>
 
-          <Border IsVisible="{Binding Sync.IsExecuting}" Padding="16" CornerRadius="8" Background="#12363B">
-            <StackPanel Spacing="10">
-              <ProgressBar IsIndeterminate="True" />
-              <TextBlock Text="{Binding Sync.ProgressMessage}" TextWrapping="Wrap" />
-              <Button HorizontalAlignment="Left" Command="{Binding Sync.CancelExecutionCommand}" Content="Cancel remaining work" />
-              <TextBlock Foreground="#A9DDE0" Text="Completed operations are preserved; cancel does not roll them back." />
-            </StackPanel>
-          </Border>
-
-          <Border IsVisible="{Binding Sync.HasResult}" Padding="16" CornerRadius="8" Background="#12363B">
-            <StackPanel Spacing="10">
-              <TextBlock FontSize="19" FontWeight="SemiBold" Text="Execution result" />
-              <TextBlock Text="{Binding Sync.ResultSummary}" TextWrapping="Wrap" />
-              <TextBlock Foreground="#55D98A" Text="Start Beat Saber to let SongCore and PlaylistManager load transferred content." TextWrapping="Wrap" />
-              <ItemsControl ItemsSource="{Binding Sync.OperationResults}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="core:SyncOperationResult">
-                    <Grid Margin="0,4" ColumnDefinitions="1.2*,1.2*,4*" ColumnSpacing="12">
-                      <TextBlock Text="{Binding Status}" />
-                      <TextBlock Grid.Column="1" Text="{Binding Operation.Kind}" />
-                      <TextBlock Grid.Column="2" Text="{Binding Message}" TextWrapping="Wrap" />
-                    </Grid>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-              <Border IsVisible="{Binding Sync.HasDiagnosticWarnings}" Padding="10" Background="#31281D" CornerRadius="6">
-                <StackPanel Spacing="4">
-                  <TextBlock FontWeight="SemiBold" Foreground="#D7A95B" Text="Diagnostic warnings" />
-                  <TextBlock Foreground="#D7A95B" Text="{Binding Sync.DiagnosticWarningsText}" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </Border>
         </StackPanel>
 
         <StackPanel IsVisible="{Binding IsSettings}" Spacing="18">

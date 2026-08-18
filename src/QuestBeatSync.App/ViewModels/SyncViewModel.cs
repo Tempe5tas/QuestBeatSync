@@ -97,6 +97,7 @@ public sealed class SyncViewModel : ViewModelBase
     public int FailedCount => LastResult?.Operations.Count(result => result.Status == SyncOperationStatus.Failed) ?? 0;
     public int SkippedCount => LastResult?.Operations.Count(result => result.Status == SyncOperationStatus.Skipped) ?? 0;
     public int CanceledCount => LastResult?.Operations.Count(result => result.Status == SyncOperationStatus.Canceled) ?? 0;
+    public string ActionOperationsHeader => $"Actions ({Operations.Count})";
 
     private async Task BuildAsync()
     {
@@ -152,7 +153,8 @@ public sealed class SyncViewModel : ViewModelBase
                 new QuestLibrary(freshScan.InstalledMaps, freshScan.InstalledPlaylists),
                 cached,
                 availability);
-            Replace(Operations, plan.Operations);
+            Replace(Operations, plan.Operations.Where(operation => IsActionable(operation.Kind)));
+            OnPropertyChanged(nameof(ActionOperationsHeader));
             Plan = plan;
             var sources = _playlists.ImportedPlaylists
                 .Select(playlist => playlist.SourceIdentity)
@@ -226,7 +228,7 @@ public sealed class SyncViewModel : ViewModelBase
             }
 
             LastResult = result;
-            Replace(OperationResults, result.Operations);
+            Replace(OperationResults, result.Operations.Where(item => IsActionable(item.Operation.Kind)));
             ProgressMessage = result.Status is SyncRunStatus.Completed or SyncRunStatus.CompletedWithFailures
                 ? "Sync finished. Start Beat Saber to load transferred maps and playlists."
                 : result.Message;
@@ -258,6 +260,7 @@ public sealed class SyncViewModel : ViewModelBase
         _confirmationPlan = null;
         IsConfirmationVisible = false;
         Operations.Clear();
+        OnPropertyChanged(nameof(ActionOperationsHeader));
         ResolutionMessage = null;
     }
 
@@ -294,4 +297,7 @@ public sealed class SyncViewModel : ViewModelBase
         target.Clear();
         foreach (var item in items) target.Add(item);
     }
+
+    private static bool IsActionable(SyncOperationKind kind) =>
+        kind is SyncOperationKind.DownloadMap or SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist;
 }
