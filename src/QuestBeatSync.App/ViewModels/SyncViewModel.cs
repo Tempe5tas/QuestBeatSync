@@ -25,6 +25,7 @@ public sealed class SyncViewModel : ViewModelBase
     private bool _isConfirmationVisible;
     private string? _message;
     private string? _progressMessage;
+    private long _planningGeneration;
 
     public SyncViewModel(
         PlaylistsViewModel playlists,
@@ -48,10 +49,10 @@ public sealed class SyncViewModel : ViewModelBase
         ConfirmExecutionCommand = new AsyncRelayCommand(ExecuteConfirmedAsync, () => CanConfirmExecution, errorHandler);
         CancelConfirmationCommand = new RelayCommand(CancelConfirmation, () => IsConfirmationVisible && !IsExecuting);
         CancelExecutionCommand = new RelayCommand(CancelExecution, () => IsExecuting);
-        playlists.RequirementsChanged += (_, _) => InvalidatePlan();
+        playlists.RequirementsChanged += (_, _) => InvalidatePlan(obsoleteBuild: true);
         library.Changed += (_, _) =>
         {
-            InvalidatePlan();
+            InvalidatePlan(obsoleteBuild: true);
             OnPropertyChanged(nameof(CanBuild));
             RaiseCommandStates();
         };
@@ -102,17 +103,24 @@ public sealed class SyncViewModel : ViewModelBase
     private async Task BuildAsync()
     {
         IsBuilding = true;
-        InvalidatePlan();
+        InvalidatePlan(obsoleteBuild: false);
+        var buildGeneration = Interlocked.Increment(ref _planningGeneration);
+        var requirementsRevision = _playlists.RequirementsRevision;
+        var selectedDevice = _selectedDevice();
         try
         {
-            var selectedDevice = _selectedDevice();
             if (selectedDevice?.IsConnected != true) throw new InvalidOperationException("Select a connected Quest before building a sync plan.");
             ResolutionMessage = "Scanning the selected Quest library...";
             var freshScan = await _scanSelectedDevice();
-            if (_selectedDevice() is not { IsConnected: true } currentDevice || !string.Equals(currentDevice.Serial, selectedDevice.Serial, StringComparison.Ordinal))
-                throw new InvalidOperationException("The selected Quest changed during the planning scan. Rebuild the sync plan.");
+            AssertPlanningInputs(selectedDevice.Serial, requirementsRevision);
 
-            var requirements = _playlists.ImportedPlaylists
+            // Publishing the mandatory scan raises Library.Changed and invalidates any old plan.
+            // Once that exact scan returns, this attempt owns the new library snapshot.
+            buildGeneration = Interlocked.Read(ref _planningGeneration);
+            AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
+
+            var playlistSnapshot = _playlists.ImportedPlaylists.ToArray();
+            var requirements = playlistSnapshot
                 .SelectMany(playlist => playlist.Entries)
                 .Where(entry => entry.Hash is not null)
                 .GroupBy(entry => entry.Hash!, StringComparer.OrdinalIgnoreCase)
@@ -133,12 +141,14 @@ public sealed class SyncViewModel : ViewModelBase
                 {
                     if (await _cache.IsCachedAsync(requirement.Hash))
                     {
+                        AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
                         cached.Add(requirement.Hash);
                         _playlists.UpdateRequirement(requirement.Hash, "Yes");
                     }
                     else
                     {
                         var lookup = FindReusable(requirement.Hash) ?? await _beatSaver.LookupAsync(new(requirement.Hash, requirement.Key));
+                        AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
                         availability[requirement.Hash] = lookup.Availability;
                         _playlists.UpdateRequirement(requirement.Hash, "No", lookup);
                         if (lookup.ExactHashMatched) exactLookups[requirement.Hash] = lookup;
@@ -149,25 +159,32 @@ public sealed class SyncViewModel : ViewModelBase
             }
 
             var plan = SyncPlanner.Build(
-                _playlists.ImportedPlaylists,
+                playlistSnapshot,
                 new QuestLibrary(freshScan.InstalledMaps, freshScan.InstalledPlaylists),
                 cached,
                 availability);
-            Replace(Operations, plan.Operations.Where(operation => IsActionable(operation.Kind)));
-            OnPropertyChanged(nameof(ActionOperationsHeader));
-            Plan = plan;
-            var sources = _playlists.ImportedPlaylists
+            var sources = playlistSnapshot
                 .Select(playlist => playlist.SourceIdentity)
                 .Where(source => source is not null)
                 .Cast<PlaylistSourceIdentity>()
                 .ToArray();
-            if (sources.Length == _playlists.ImportedPlaylists.Count)
-                ExecutionPlan = new SyncExecutionPlan(plan, QuestScanBinding.Capture(selectedDevice.Serial, freshScan), sources, exactLookups);
-            ResolutionMessage = $"Resolved {plan.UniqueMapCount} unique maps across {plan.PlaylistReferenceCount} playlist references.";
+            AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
+            await OnUiThreadAsync(() =>
+            {
+                AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
+                Replace(Operations, plan.Operations.Where(operation => IsActionable(operation.Kind)));
+                OnPropertyChanged(nameof(ActionOperationsHeader));
+                Plan = plan;
+                if (sources.Length == playlistSnapshot.Length)
+                    ExecutionPlan = new SyncExecutionPlan(plan, QuestScanBinding.Capture(selectedDevice.Serial, freshScan), sources, exactLookups);
+                ResolutionMessage = $"Resolved {plan.UniqueMapCount} unique maps across {plan.PlaylistReferenceCount} playlist references.";
+            });
         }
+        catch (PlanningSupersededException) { }
         finally
         {
-            if (Plan is null) ResolutionMessage = "Sync requirement resolution did not complete.";
+            if (Plan is null && IsPlanningCurrent(selectedDevice?.Serial, requirementsRevision, buildGeneration))
+                ResolutionMessage = "Sync requirement resolution did not complete.";
             IsBuilding = false;
         }
     }
@@ -253,8 +270,9 @@ public sealed class SyncViewModel : ViewModelBase
                  (result.Availability == BeatSaverAvailability.Online && result.ExactHashMatched &&
                   string.Equals(result.ResolvedHash, hash, StringComparison.OrdinalIgnoreCase))));
 
-    private void InvalidatePlan()
+    private void InvalidatePlan(bool obsoleteBuild)
     {
+        if (obsoleteBuild) Interlocked.Increment(ref _planningGeneration);
         Plan = null;
         ExecutionPlan = null;
         _confirmationPlan = null;
@@ -263,6 +281,23 @@ public sealed class SyncViewModel : ViewModelBase
         OnPropertyChanged(nameof(ActionOperationsHeader));
         ResolutionMessage = null;
     }
+
+    private bool IsPlanningCurrent(string? serial, long requirementsRevision, long generation) =>
+        generation == Interlocked.Read(ref _planningGeneration) &&
+        requirementsRevision == _playlists.RequirementsRevision &&
+        _selectedDevice() is { IsConnected: true } current &&
+        string.Equals(current.Serial, serial, StringComparison.Ordinal);
+
+    private void AssertPlanningInputs(string serial, long requirementsRevision, long? generation = null)
+    {
+        if (requirementsRevision != _playlists.RequirementsRevision ||
+            _selectedDevice() is not { IsConnected: true } current ||
+            !string.Equals(current.Serial, serial, StringComparison.Ordinal) ||
+            generation is not null && generation.Value != Interlocked.Read(ref _planningGeneration))
+            throw new PlanningSupersededException();
+    }
+
+    private sealed class PlanningSupersededException : OperationCanceledException;
 
     private void RaiseCommandStates()
     {

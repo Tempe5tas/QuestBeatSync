@@ -16,13 +16,14 @@ public sealed class PlaylistsViewModel : ViewModelBase
     private Playlist? _selected;
     private bool _isImporting;
     private bool _isChecking;
+    private long _requirementsRevision;
 
     public PlaylistsViewModel(ILocalPlaylistImporter importer, IBeatSaverClient beatSaver, IBeatMapCache cache, LibraryViewModel library, Func<Exception, Task> errorHandler)
     {
         _importer = importer; _beatSaver = beatSaver; _cache = cache; _library = library;
         CheckSelectedCommand = new AsyncRelayCommand(CheckSelectedAsync, () => SelectedPlaylist is not null && !IsChecking, errorHandler);
         CacheSelectedCommand = new AsyncRelayCommand(CacheSelectedAsync, () => SelectedPlaylist is not null && !IsChecking, errorHandler);
-        library.Changed += (_, _) => { UpdateInstalledStatuses(); RequirementsChanged?.Invoke(this, EventArgs.Empty); };
+        library.Changed += (_, _) => UpdateInstalledStatuses();
     }
 
     public ObservableCollection<Playlist> ImportedPlaylists { get; } = [];
@@ -31,6 +32,7 @@ public sealed class PlaylistsViewModel : ViewModelBase
     public AsyncRelayCommand CheckSelectedCommand { get; }
     public AsyncRelayCommand CacheSelectedCommand { get; }
     public event EventHandler? RequirementsChanged;
+    public long RequirementsRevision => Interlocked.Read(ref _requirementsRevision);
     public IEnumerable<PlaylistEntryStatusViewModel> AllEntryStatuses => _statuses.Values.SelectMany(value => value);
 
     public Playlist? SelectedPlaylist
@@ -106,7 +108,7 @@ public sealed class PlaylistsViewModel : ViewModelBase
         {
             IsImporting = false;
             NotifyState();
-            if (requirementsChanged) RequirementsChanged?.Invoke(this, EventArgs.Empty);
+            if (requirementsChanged) PublishRequirementsChanged();
         }
     }
 
@@ -145,7 +147,7 @@ public sealed class PlaylistsViewModel : ViewModelBase
                 if (result.ResolvedHash is not null) item.CachedLocally = await _cache.IsCachedAsync(result.ResolvedHash) ? "Yes" : "No";
             }
         }
-        finally { IsChecking = false; RequirementsChanged?.Invoke(this, EventArgs.Empty); }
+        finally { IsChecking = false; }
     }
 
     private async Task CacheSelectedAsync()
@@ -159,7 +161,7 @@ public sealed class PlaylistsViewModel : ViewModelBase
                 if (!result.IsSuccess) item.StatusMessage = result.ErrorMessage;
             }
         }
-        finally { IsChecking = false; RequirementsChanged?.Invoke(this, EventArgs.Empty); }
+        finally { IsChecking = false; }
     }
 
     public void UpdateRequirement(string hash, string cached, BeatSaverLookupResult? lookup = null)
@@ -173,6 +175,12 @@ public sealed class PlaylistsViewModel : ViewModelBase
         var known = _library.InstalledMaps.Where(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null).Select(map => map.Identity!.Hash).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var proveAbsent = _library.ScanCompleted && _library.InstalledMaps.All(map => map.IdentityStatus == QuestMapIdentityStatus.HashIdentified && map.Identity is not null);
         foreach (var item in AllEntryStatuses) item.InstalledOnQuest = item.Hash is null ? "Unknown" : known.Contains(item.Hash) ? "Yes" : proveAbsent ? "No" : "Unknown";
+    }
+
+    private void PublishRequirementsChanged()
+    {
+        Interlocked.Increment(ref _requirementsRevision);
+        RequirementsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void NotifyState() { _state = new(ImportedPlaylists); OnPropertyChanged(nameof(HasImportedPlaylists)); OnPropertyChanged(nameof(HasImportErrors)); OnPropertyChanged(nameof(ImportErrorText)); OnPropertyChanged(nameof(TotalPlaylistReferences)); OnPropertyChanged(nameof(UniqueRequiredHashes)); OnPropertyChanged(nameof(DuplicateReferences)); }

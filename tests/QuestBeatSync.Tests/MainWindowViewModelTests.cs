@@ -165,6 +165,29 @@ public sealed class MainWindowViewModelTests
     }
 
     [TestMethod]
+    public async Task ObsoleteScanFailureCannotOverwriteNewerSuccessfulScan()
+    {
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var scanner = new LateFailingBeatSaberScanner();
+        var viewModel = CreateViewModel(new StubQuestTransport([]), scanner);
+        viewModel.Dashboard.SelectedDevice = device;
+
+        var first = viewModel.Dashboard.ScanSelectedDeviceAsync();
+        await scanner.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = viewModel.Dashboard.ScanSelectedDeviceAsync();
+        await second;
+        scanner.ReleaseFirst.TrySetResult();
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => first);
+
+        Assert.IsTrue(viewModel.Library.ScanCompleted);
+        Assert.IsTrue(viewModel.Library.IsScanCurrent);
+        Assert.AreEqual("QUEST", viewModel.Library.ScanBinding?.DeviceSerial);
+        Assert.AreEqual("Beat Saber detected", viewModel.Dashboard.BeatSaberStatus);
+        Assert.IsFalse(viewModel.Dashboard.HasEnvironmentError);
+        Assert.IsFalse(viewModel.Dashboard.IsEnvironmentScanning);
+    }
+
+    [TestMethod]
     public async Task AsyncCommandFailure_IsPublishedThroughUnifiedOperationError()
     {
         var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
@@ -236,6 +259,39 @@ public sealed class MainWindowViewModelTests
         viewModel.Playlists.SelectedPlaylist = second;
         Assert.IsTrue(viewModel.Playlists.SelectedEntries.All(item =>
             item.Availability == BeatSaverAvailability.Online));
+    }
+
+    [TestMethod]
+    public async Task LibraryInvalidationDuringPlanning_PreventsStalePlanPublication()
+    {
+        const string hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        var playlist = new Playlist("Canary");
+        playlist.Add(new PlaylistEntry("key", hash, "Map"));
+        var beatSaver = new BlockingBeatSaverClient();
+        var device = new QuestDevice("QUEST", QuestConnectionState.Device, QuestTransportKind.Usb);
+        var options = new AdbQuestTransportOptions { AppDataToolsDirectory = "unused" };
+        var viewModel = new MainWindowViewModel(
+            new StubQuestTransport([device]),
+            new StubBeatSaberScanner(),
+            new StubPlaylistImporter([new PlaylistImportResult("canary.bplist", playlist, null)]),
+            beatSaver,
+            new FakeBeatMapCache(),
+            options,
+            new AdbSettingsStore(Path.Combine(Path.GetTempPath(), "qbsync-unused-settings.json")));
+        await viewModel.InitializeAsync();
+        await viewModel.Playlists.ImportAsync(["canary.bplist"]);
+
+        var build = viewModel.Sync.BuildCommand.ExecuteAsync();
+        await beatSaver.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.Library.MarkStale("Device state invalidated during planning.");
+        beatSaver.Release.TrySetResult();
+        await build;
+
+        Assert.IsNull(viewModel.Sync.Plan);
+        Assert.IsNull(viewModel.Sync.ExecutionPlan);
+        Assert.IsFalse(viewModel.Sync.IsConfirmationVisible);
+        Assert.IsFalse(viewModel.HasOperationError);
+        Assert.IsFalse(viewModel.Sync.ResolutionMessage?.StartsWith("Resolved ", StringComparison.Ordinal) == true);
     }
 
     private static MainWindowViewModel CreateViewModel(
@@ -319,6 +375,25 @@ public sealed class MainWindowViewModelTests
         }
     }
 
+    private sealed class LateFailingBeatSaberScanner : IQuestBeatSaberScanner
+    {
+        private int _callCount;
+        public TaskCompletionSource FirstStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirst { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<QuestBeatSaberScanResult> ScanAsync(QuestDevice device, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _callCount) == 1)
+            {
+                FirstStarted.TrySetResult();
+                await ReleaseFirst.Task;
+                throw new IOException("obsolete scan failure");
+            }
+
+            return new QuestBeatSaberScanResult(true, true, true, true, true, [], []);
+        }
+    }
+
     private sealed class FailOnSecondCacheCheck : IBeatMapCache
     {
         private int _checkCount;
@@ -358,6 +433,22 @@ public sealed class MainWindowViewModelTests
             Uri downloadUri,
             Stream destination,
             CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class BlockingBeatSaverClient : IBeatSaverClient
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<BeatSaverLookupResult> LookupAsync(BeatSaverLookupRequest request, CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return new BeatSaverLookupResult(BeatSaverAvailability.Online, request.Hash, request.Key, request.Hash, request.Key, new Uri("https://example.test/map.zip"), true);
+        }
+
+        public Task DownloadZipAsync(Uri downloadUri, Stream destination, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 

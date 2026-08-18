@@ -261,6 +261,49 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
+    public async Task QuestChangeAfterWriterLock_RefusesAndReleasesWithoutContentWrites()
+    {
+        var stateA = EmptyScan();
+        var fixture = CreateFixture(
+            stateA,
+            Plan(Operation(SyncOperationKind.UploadMap, HashA)),
+            currentScan: stateA,
+            writePhaseScan: stateA,
+            lockedScan: ScanWithMap(HashB));
+        fixture.Target.EndWarning = "lock release diagnostic";
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Refused, result.Status);
+        StringAssert.Contains(result.Message, "after writer lock acquisition");
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+        Assert.AreEqual(1, fixture.Target.BeginCount);
+        Assert.AreEqual(1, fixture.Target.EndCount);
+        Assert.IsTrue(result.DiagnosticWarnings.Any(warning => warning.Contains("lock release diagnostic", StringComparison.Ordinal)));
+        StringAssert.Contains(result.Message, "after writer lock acquisition");
+        Assert.IsFalse(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashA}"));
+    }
+
+    [TestMethod]
+    public async Task UnchangedQuestUnderWriterLock_ProceedsWithWrites()
+    {
+        var stateA = EmptyScan();
+        var fixture = CreateFixture(
+            stateA,
+            Plan(Operation(SyncOperationKind.UploadMap, HashA)),
+            currentScan: stateA,
+            writePhaseScan: stateA,
+            lockedScan: stateA);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Completed, result.Status);
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.AreEqual(1, fixture.Target.PromoteCount);
+        Assert.AreEqual(1, fixture.Target.EndCount);
+    }
+
+    [TestMethod]
     public async Task QuestChangeAfterDownloadsRefusesWriteAndKeepsPreparedCache()
     {
         var plan = Plan(
@@ -516,11 +559,13 @@ public sealed class Phase6AExecutionContractTests
         IPlaylistExecutionWorkspace? workspace = null,
         ISyncExecutionJournal? journal = null,
         QuestBeatSaberScanResult? writePhaseScan = null,
+        QuestBeatSaberScanResult? lockedScan = null,
         IReadOnlyDictionary<string, BeatSaverLookupResult>? lookups = null)
     {
         var events = new List<string>();
         var firstScan = currentScan ?? boundScan;
-        var scanner = new StubScanner(firstScan, writePhaseScan ?? firstScan);
+        var secondScan = writePhaseScan ?? firstScan;
+        var scanner = new StubScanner(firstScan, secondScan, lockedScan ?? secondScan);
         var target = new RecordingTarget(events);
         var mapSources = new RecordingMapSources(events);
         var recordingJournal = journal as MemoryJournal ?? new MemoryJournal();

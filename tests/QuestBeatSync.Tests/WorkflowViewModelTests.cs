@@ -146,11 +146,13 @@ public sealed class WorkflowViewModelTests
         viewModel.RequirementsChanged += (_, _) => changes++;
 
         await viewModel.ImportAsync([path]);
+        var revisionAfterFirstImport = viewModel.RequirementsRevision;
         await viewModel.ImportAsync([path]);
 
         Assert.AreEqual(1, viewModel.ImportedPlaylists.Count);
         Assert.AreSame(first, viewModel.ImportedPlaylists[0]);
         Assert.AreEqual(1, changes);
+        Assert.AreEqual(revisionAfterFirstImport, viewModel.RequirementsRevision);
     }
 
     [TestMethod]
@@ -168,6 +170,7 @@ public sealed class WorkflowViewModelTests
         var sync = new SyncViewModel(playlists, library, client, cache, _ => Task.CompletedTask,
             selectedDevice: () => Connected("QUEST"), scanSelectedDevice: () => Task.FromResult(QuestBeatSaberScanResult.Empty));
         await playlists.ImportAsync([path]);
+        var originalRevision = playlists.RequirementsRevision;
         await sync.BuildCommand.ExecuteAsync();
         Assert.IsNotNull(sync.ExecutionPlan);
 
@@ -182,6 +185,7 @@ public sealed class WorkflowViewModelTests
         Assert.IsTrue(playlists.AllEntryStatuses.All(status => status.LookupResult is null));
         Assert.IsNull(sync.Plan);
         Assert.IsNull(sync.ExecutionPlan);
+        Assert.IsGreaterThan(originalRevision, playlists.RequirementsRevision);
     }
 
     [TestMethod]

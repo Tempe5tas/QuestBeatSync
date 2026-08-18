@@ -212,9 +212,33 @@ public sealed class SyncExecutor
                 return await RefusePendingAsync($"Could not prepare Quest writes: {exception.Message}").ConfigureAwait(false);
             }
 
+            string? lockedValidationRefusal = null;
+            var lockedValidationCanceled = false;
             try
             {
-                foreach (var index in writeIndexes)
+                progress?.Report(new SyncProgress("Validating locked Quest state", 0, writeIndexes.Length, "Revalidating Quest state while the QBSync writer lock is held."));
+                QuestBeatSaberScanResult lockedScan;
+                try
+                {
+                    lockedScan = await _scanner.ScanAsync(selectedDevice, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    CancelPending();
+                    lockedValidationCanceled = true;
+                    lockedScan = QuestBeatSaberScanResult.Empty;
+                }
+                catch (Exception exception)
+                {
+                    lockedValidationRefusal = $"Could not validate Quest state after writer lock acquisition: {exception.Message}";
+                    lockedScan = QuestBeatSaberScanResult.Empty;
+                }
+
+                if (!lockedValidationCanceled && lockedValidationRefusal is null &&
+                    !executionPlan.Target.Matches(selectedDevice.Serial, lockedScan))
+                    lockedValidationRefusal = "Quest state changed after writer lock acquisition. Rebuild the plan.";
+
+                foreach (var index in lockedValidationCanceled || lockedValidationRefusal is not null ? [] : writeIndexes)
                 {
                     if (cancellationToken.IsCancellationRequested)
                     {
@@ -268,6 +292,11 @@ public sealed class SyncExecutor
                 }
                 foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
             }
+
+            if (lockedValidationCanceled)
+                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled before Quest writes began.").ConfigureAwait(false);
+            if (lockedValidationRefusal is not null)
+                return await RefusePendingAsync(lockedValidationRefusal).ConfigureAwait(false);
         }
 
         foreach (var index in Enumerable.Range(0, results.Length).Where(index => results[index].Status == SyncOperationStatus.Pending))

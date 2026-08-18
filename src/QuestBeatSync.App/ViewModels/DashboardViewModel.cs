@@ -11,6 +11,7 @@ public sealed class DashboardViewModel : ViewModelBase
     private readonly IQuestBeatSaberScanner _scanner;
     private readonly object _scanGate = new();
     private CancellationTokenSource? _scanSource;
+    private long _scanGeneration;
     private QuestDevice? _selectedDevice;
     private QuestDeviceDiscoveryStatus _discoveryStatus;
     private string? _errorMessage;
@@ -64,6 +65,7 @@ public sealed class DashboardViewModel : ViewModelBase
             if (SetProperty(ref _selectedDevice, value))
             {
                 CancelActiveScan();
+                IsEnvironmentScanning = false;
                 Library.MarkStale(value is null ? "No Quest is selected." : "Selected Quest changed; scan again before planning.");
                 NotifyDevice();
             }
@@ -174,23 +176,55 @@ public sealed class DashboardViewModel : ViewModelBase
     {
         var current = new CancellationTokenSource();
         CancellationTokenSource? previous;
-        lock (_scanGate) { previous = _scanSource; _scanSource = current; }
+        long generation;
+        lock (_scanGate) { previous = _scanSource; _scanSource = current; generation = ++_scanGeneration; }
         try
         {
             try { previous?.Cancel(); } catch (ObjectDisposedException) { }
-            await OnUiThreadAsync(() => { EnvironmentError = null; IsEnvironmentScanning = true; });
+            await OnUiThreadAsync(() =>
+            {
+                ThrowIfScanIsObsolete(current, generation);
+                EnvironmentError = null;
+                IsEnvironmentScanning = true;
+            });
             var result = await _scanner.ScanAsync(device, current.Token);
             current.Token.ThrowIfCancellationRequested();
+            ThrowIfScanIsObsolete(current, generation);
             if (!string.Equals(SelectedDevice?.Serial, device.Serial, StringComparison.Ordinal)) throw new OperationCanceledException("Selected Quest changed during scan.", current.Token);
-            await OnUiThreadAsync(() => { SetDetection(result.BeatSaberDetected, result.SongCoreDetected, result.PlaylistManagerDetected); Library.Apply(result, scanCompleted: true, device.Serial); });
+            await OnUiThreadAsync(() =>
+            {
+                ThrowIfScanIsObsolete(current, generation);
+                SetDetection(result.BeatSaberDetected, result.SongCoreDetected, result.PlaylistManagerDetected);
+                Library.Apply(result, scanCompleted: true, device.Serial);
+            });
             return result;
         }
-        catch (OperationCanceledException) { await OnUiThreadAsync(() => Library.MarkStale("Quest library scan was canceled; the previous result is retained.")); throw; }
-        catch (Exception exception) { await OnUiThreadAsync(() => { EnvironmentError = exception.Message; Library.MarkScanFailed(exception.Message); }); throw; }
+        catch (OperationCanceledException)
+        {
+            if (OwnsScan(current, generation))
+                await OnUiThreadAsync(() =>
+                {
+                    if (OwnsScan(current, generation))
+                        Library.MarkStale("Quest library scan was canceled; the previous result is retained.");
+                });
+            throw;
+        }
+        catch (Exception exception)
+        {
+            if (!OwnsScan(current, generation))
+                throw new OperationCanceledException("Quest library scan was superseded.", exception, current.Token);
+            await OnUiThreadAsync(() =>
+            {
+                ThrowIfScanIsObsolete(current, generation);
+                EnvironmentError = exception.Message;
+                Library.MarkScanFailed(exception.Message);
+            });
+            throw;
+        }
         finally
         {
             var owner = false;
-            lock (_scanGate) { if (ReferenceEquals(_scanSource, current)) { _scanSource = null; owner = true; } }
+            lock (_scanGate) { if (ReferenceEquals(_scanSource, current) && _scanGeneration == generation) { _scanSource = null; owner = true; } }
             if (owner) await OnUiThreadAsync(() => IsEnvironmentScanning = false);
             current.Dispose();
         }
@@ -199,7 +233,11 @@ public sealed class DashboardViewModel : ViewModelBase
     private void SetSelectedDevice(QuestDevice? value)
     {
         var changed = !string.Equals(_selectedDevice?.Serial, value?.Serial, StringComparison.Ordinal);
-        if (changed) CancelActiveScan();
+        if (changed)
+        {
+            CancelActiveScan();
+            IsEnvironmentScanning = false;
+        }
         _selectedDevice = value;
         OnPropertyChanged(nameof(SelectedDevice));
         if (changed) Library.MarkStale(value is null ? "No Quest is selected; the displayed library is retained but stale." : "Device selected. Scan the Quest library before planning.");
@@ -209,6 +247,22 @@ public sealed class DashboardViewModel : ViewModelBase
     private void NotifyDiscovery() { OnPropertyChanged(nameof(HasDevices)); OnPropertyChanged(nameof(HasMultipleDevices)); OnPropertyChanged(nameof(IsAdbUnavailable)); OnPropertyChanged(nameof(DeviceStatus)); NotifyDevice(); }
     private void NotifyDevice() { OnPropertyChanged(nameof(HasSelectedDevice)); OnPropertyChanged(nameof(SelectedSerial)); OnPropertyChanged(nameof(SelectedConnectionState)); OnPropertyChanged(nameof(SelectedTransport)); OnPropertyChanged(nameof(SelectedModel)); OnPropertyChanged(nameof(DeviceStatus)); NotifyWirelessCommands(); }
     private void NotifyWirelessCommands() { OnPropertyChanged(nameof(CanConnect)); OnPropertyChanged(nameof(CanEnableWireless)); OnPropertyChanged(nameof(CanScanLibrary)); ConnectCommand.RaiseCanExecuteChanged(); DisconnectCommand.RaiseCanExecuteChanged(); EnableWirelessCommand.RaiseCanExecuteChanged(); ScanLibraryCommand.RaiseCanExecuteChanged(); }
-    private void CancelActiveScan() { lock (_scanGate) { try { _scanSource?.Cancel(); } catch (ObjectDisposedException) { } } }
+    private void CancelActiveScan()
+    {
+        lock (_scanGate)
+        {
+            ++_scanGeneration;
+            try { _scanSource?.Cancel(); } catch (ObjectDisposedException) { }
+            _scanSource = null;
+        }
+    }
+    private bool OwnsScan(CancellationTokenSource source, long generation)
+    {
+        lock (_scanGate) return ReferenceEquals(_scanSource, source) && _scanGeneration == generation;
+    }
+    private void ThrowIfScanIsObsolete(CancellationTokenSource source, long generation)
+    {
+        if (!OwnsScan(source, generation)) throw new OperationCanceledException("Quest library scan was superseded.", source.Token);
+    }
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items) { target.Clear(); foreach (var item in items) target.Add(item); }
 }
