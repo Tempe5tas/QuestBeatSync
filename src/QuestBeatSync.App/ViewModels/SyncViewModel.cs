@@ -70,12 +70,13 @@ public sealed class SyncViewModel : ViewModelBase
     public bool CanConfirmExecution => IsConfirmationVisible && ReferenceEquals(_confirmationPlan, ExecutionPlan) && !IsExecuting;
     public bool HasPlan => Plan is not null;
     public bool HasResult => LastResult is not null;
+    public bool HasPlanOrResult => HasPlan || HasResult;
     public bool HasDiagnosticWarnings => LastResult?.DiagnosticWarnings.Count > 0;
     public bool IsBuilding { get => _isBuilding; private set { if (SetProperty(ref _isBuilding, value)) RaiseCommandStates(); } }
     public bool IsExecuting { get => _isExecuting; private set { if (SetProperty(ref _isExecuting, value)) RaiseCommandStates(); } }
     public bool IsConfirmationVisible { get => _isConfirmationVisible; private set { if (SetProperty(ref _isConfirmationVisible, value)) RaiseCommandStates(); } }
     public SyncExecutionPlan? ExecutionPlan { get => _executionPlan; private set { if (SetProperty(ref _executionPlan, value)) { OnPropertyChanged(nameof(CanReviewExecution)); OnPropertyChanged(nameof(TargetSerial)); RaiseCommandStates(); } } }
-    public SyncPlan? Plan { get => _plan; private set { if (SetProperty(ref _plan, value)) { OnPropertyChanged(nameof(HasPlan)); NotifyPlanCounts(); } } }
+    public SyncPlan? Plan { get => _plan; private set { if (SetProperty(ref _plan, value)) { OnPropertyChanged(nameof(HasPlan)); OnPropertyChanged(nameof(HasPlanOrResult)); NotifyPlanCounts(); } } }
     public SyncResult? LastResult { get => _lastResult; private set { if (SetProperty(ref _lastResult, value)) NotifyResult(); } }
     public string? ResolutionMessage { get => _message; private set => SetProperty(ref _message, value); }
     public string? ProgressMessage { get => _progressMessage; private set => SetProperty(ref _progressMessage, value); }
@@ -329,7 +330,7 @@ public sealed class SyncViewModel : ViewModelBase
 
     private void NotifyResult()
     {
-        OnPropertyChanged(nameof(HasResult)); OnPropertyChanged(nameof(HasDiagnosticWarnings));
+        OnPropertyChanged(nameof(HasResult)); OnPropertyChanged(nameof(HasPlanOrResult)); OnPropertyChanged(nameof(HasDiagnosticWarnings));
         OnPropertyChanged(nameof(DiagnosticWarningsText)); OnPropertyChanged(nameof(ResultSummary));
         OnPropertyChanged(nameof(SucceededCount)); OnPropertyChanged(nameof(FailedCount));
         OnPropertyChanged(nameof(SkippedCount)); OnPropertyChanged(nameof(CanceledCount));

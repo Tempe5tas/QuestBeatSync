@@ -47,6 +47,10 @@ public sealed class SyncExecutionViewModelTests
         Assert.AreEqual(1, fixture.Target.PlaylistCount);
         Assert.IsNotNull(fixture.Sync.LastResult);
         Assert.AreEqual(SyncRunStatus.Completed, fixture.Sync.LastResult.Status);
+        Assert.IsNull(fixture.Sync.Plan, "The post-write fresh scan invalidates the executed plan.");
+        Assert.IsTrue(fixture.Sync.HasResult);
+        Assert.IsTrue(fixture.Sync.HasPlanOrResult, "Execution results must remain visible after post-write scan invalidates the plan.");
+        Assert.IsNotEmpty(fixture.Sync.OperationResults);
         Assert.AreEqual(0, fixture.Sync.DeletionCount);
     }
 
