@@ -1,7 +1,7 @@
 # QuestBeatSync
 
 > [!WARNING]
-> QuestBeatSync is early software. Its real Quest write path is **NOT YET MANUALLY VERIFIED**. Use only a dedicated, small canary playlist for the first manual write test.
+> QuestBeatSync is early software. A real Quest canary was performed and exposed target-map compatibility and playlist-identity failures. Phase 6 is **not accepted** until the follow-up canary passes.
 
 QuestBeatSync (QBSync) is a preservation-first Windows and Linux desktop application for managing native Quest Beat Saber custom maps and PlaylistManager playlists through ADB. Normal sync never deletes existing Quest maps or playlists.
 
@@ -11,7 +11,26 @@ At startup QBSync validates ADB and runs normal `adb devices` discovery. Connect
 
 The user may scan explicitly with **Scan Quest Library**. **Build Sync Plan** always performs its own mandatory fresh Quest library scan before resolving cache and BeatSaver requirements. If that scan fails, no plan is created and the last successful scan remains visible as stale/failed diagnostic state.
 
-Current sync operations are executable only after preview and explicit confirmation. Execution plans are bound to the selected ADB serial, the exact scan fingerprint, immutable playlist source SHA-256 identities, and exact BeatSaver hash evidence. USB and network serials are deliberately distinct identities.
+Current sync operations are executable only after preview and explicit confirmation. Execution plans are bound to the selected ADB serial, target Beat Saber package version, the exact scan fingerprint, immutable playlist source SHA-256 identities, and exact BeatSaver hash evidence. USB and network serials are deliberately distinct identities.
+
+## Real canary findings and compatibility gate
+
+The first real write canary proved that a structurally valid BeatSaver map can still be incompatible with the target Quest stack. On Beat Saber `1.35.0_8016709773` (`versionCode 1130`), a V4.0.1 map reproducibly caused a native SongCore crash during startup, while a Legacy V2 map launched successfully.
+
+QBSync now parses only root-level `Info.dat` format properties and keeps BeatSaver availability separate from target compatibility. V4 maps are incompatible on Beat Saber versions earlier than 1.36. V4 maps on a missing/unparseable target version, or on a newer APK without proven SongCore capability, remain compatibility-unknown and are not uploaded. The exact prepared local bytes are inspected before a writer lock is acquired; a useful completed download may remain cached even when its upload is skipped.
+
+The follow-up real Quest write path is **not yet validated**.
+
+## Playlist identity and lifecycle
+
+Quest `.bplist`, JSON, and PlaylistManager `_BMBF.json` representations are normalized using exact BeatSaver hashes where available, with keys used only as a fallback. Equal titles or equal song counts alone never prove equality.
+
+- A semantically equal Quest playlist is kept and no second file is imported.
+- A same-lineage/title playlist with changed contents is reported as a conflict; the existing Quest file is preserved because safe replacement is not implemented.
+- Ambiguous identity is preserved and not duplicated opportunistically.
+- A genuinely new playlist is transferred using its original safe `.bplist` basename, such as `BeatSaver - ACG.bplist`.
+
+QBSync does not synthesize `_BMBF.json`. PlaylistManager may perform its normal post-launch conversion to a name such as `BeatSaver - ACG.bplist_BMBF.json`. Historical `qbsync-*` canary artifacts are recognized through semantic comparison but are never automatically deleted or renamed.
 
 ## ADB bootstrap
 
@@ -31,10 +50,11 @@ QBSync prepares network/cache inputs and immutable playlist snapshots before ope
 
 1. Initial validation against the confirmed scan binding.
 2. Local preparation.
-3. A pre-write Quest scan.
-4. Cooperative writer-lock acquisition and Beat Saber force-stop.
-5. A lock-held Quest scan and fingerprint validation.
-6. Upload/import operations only if all validation succeeds.
+3. Target map-format compatibility preflight against the bound Beat Saber package version.
+4. A pre-write Quest scan.
+5. Cooperative writer-lock acquisition and Beat Saber force-stop.
+6. A lock-held Quest scan and fingerprint validation.
+7. Upload/import operations only if all validation succeeds.
 
 A mismatch at any validation refuses execution without map or playlist content writes and asks the user to rebuild. The writer lock is released best-effort; journal and cleanup failures remain diagnostic warnings and cannot rewrite primary operation truth.
 
@@ -53,24 +73,22 @@ dotnet run --project src/QuestBeatSync.App/QuestBeatSync.App.csproj
 
 Automated tests use fakes for Quest, ADB, and network boundaries. They must not access or mutate a real Quest, use the real internet, or depend on a locally installed ADB.
 
-## Manual single-map canary checklist
+## Follow-up manual canary checklist
 
-This checklist is intentionally manual and has not yet been completed:
+This checklist is intentionally manual and has not yet passed:
 
 1. Start QBSync.
 2. Confirm ADB Ready.
 3. Discover/connect the Quest through the UI.
 4. Confirm connection alone does not trigger a full library scan.
-5. Import a dedicated canary playlist containing one small map not currently installed.
-6. Build Sync Plan.
-7. Confirm the fresh scan reflects the real existing Quest library.
-8. Verify the preview shows Download: 1, Upload: 1, Playlist transfer: 1, Delete: 0.
-9. Confirm and execute.
-10. Verify the final `CustomLevels/<HASH>` exists, no current execution staging remains, the writer lock is gone, and old Quest-only maps remain.
-11. Manually start Beat Saber.
-12. Verify and play the map.
-13. Inspect PlaylistManager behavior.
-14. Build the same plan again and observe idempotency behavior.
+5. On Beat Saber 1.35, verify V4.0.1 regression map `73F85C364E9C4EF7EE99FFF551BD3431D237B209` is classified incompatible and receives zero uploads.
+6. Verify Beat Saber still launches and that map is absent from `CustomLevels`.
+7. Import and execute one known-compatible Legacy V2 map; verify launch, visibility, and playability.
+8. Verify a semantically equal existing ROCK `_BMBF.json` causes zero playlist imports and no duplicate ROCK.
+9. Verify changed ACG content is reported as update-required/conflict, with the existing ACG preserved and no duplicate created.
+10. Import one genuinely new playlist and verify its ingress uses the original `.bplist` basename.
+11. Manually launch Beat Saber and observe PlaylistManager's native `_BMBF.json` conversion.
+12. Verify no current execution staging remains, the writer lock is gone, old Quest-only maps remain, and Delete is 0.
 
 ## Out of scope
 

@@ -122,14 +122,67 @@ public static class SyncPlanner
 
         foreach (var playlist in playlists)
         {
-            plan.Add(new SyncOperation(
-                SyncOperationKind.ImportPlaylist,
-                $"Import playlist: {playlist.Name}",
-                PlaylistName: playlist.Name,
-                PlaylistSource: playlist.SourceIdentity));
+            AddPlaylistOperation(plan, playlist, questLibrary.InstalledPlaylists);
         }
 
         return plan;
+    }
+
+    private static void AddPlaylistOperation(
+        SyncPlan plan,
+        Playlist desired,
+        IReadOnlyList<QuestInstalledPlaylist> questPlaylists)
+    {
+        var desiredIdentities = NormalizeDesiredSongs(desired, out var desiredComplete);
+        var sourceBasename = desired.SourceIdentity is null ? null : Path.GetFileName(desired.SourceIdentity.CanonicalPath);
+        var candidates = questPlaylists.Where(quest =>
+                string.Equals(quest.PlaylistTitle.Trim(), desired.Name.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                sourceBasename is not null && string.Equals(quest.FilenameLineage, sourceBasename, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var equal = candidates.FirstOrDefault(quest =>
+            desiredComplete && quest.SemanticIdentityComplete &&
+            desiredIdentities.SequenceEqual(quest.NormalizedSongIdentities ?? [], StringComparer.Ordinal));
+        if (equal is not null)
+        {
+            plan.Add(new SyncOperation(
+                SyncOperationKind.KeepExistingPlaylist,
+                $"Keep existing semantically equal Quest playlist: {desired.Name}",
+                PlaylistName: desired.Name,
+                PlaylistSource: desired.SourceIdentity));
+            return;
+        }
+        if (candidates.Length > 0)
+        {
+            var complete = desiredComplete && candidates.All(candidate => candidate.SemanticIdentityComplete);
+            var kind = complete ? SyncOperationKind.PlaylistConflict : SyncOperationKind.PlaylistAmbiguous;
+            var questCounts = string.Join(", ", candidates.Select(candidate => candidate.SongReferenceCount).Distinct().Order());
+            plan.Add(new SyncOperation(
+                kind,
+                complete
+                    ? $"Existing playlist preserved; update is not safely supported. Quest: {questCounts} songs; desired: {desired.EntryCount} songs: {desired.Name}"
+                    : $"Existing playlist identity is ambiguous and was preserved: {desired.Name}",
+                PlaylistName: desired.Name,
+                PlaylistSource: desired.SourceIdentity));
+            return;
+        }
+        plan.Add(new SyncOperation(
+            SyncOperationKind.ImportPlaylist,
+            $"Import new playlist using its original filename: {desired.Name}",
+            PlaylistName: desired.Name,
+            PlaylistSource: desired.SourceIdentity));
+    }
+
+    private static string[] NormalizeDesiredSongs(Playlist playlist, out bool complete)
+    {
+        complete = true;
+        var result = new List<string>();
+        foreach (var entry in playlist.Entries)
+        {
+            if (entry.Hash is not null) result.Add($"H:{entry.Hash}");
+            else if (entry.Key is not null) result.Add($"K:{entry.Key.ToUpperInvariant()}");
+            else complete = false;
+        }
+        return result.Order(StringComparer.Ordinal).ToArray();
     }
 
     private static IReadOnlyList<QuestMapReference> CollectQuestMaps(QuestLibrary library)

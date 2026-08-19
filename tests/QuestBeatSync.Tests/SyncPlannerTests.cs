@@ -95,6 +95,69 @@ public sealed class SyncPlannerTests
         Assert.IsNull(plan.Operations.Single(operation => operation.Kind == SyncOperationKind.SkipUnknown).MapIdentity);
     }
 
+    [TestMethod]
+    public void SemanticallyEqualBmbfPlaylist_IsKeptWithoutDuplicateImport()
+    {
+        var desired = PlaylistWithSource("ROCK", "BeatSaver - ROCK.bplist", HashA);
+        var quest = new QuestInstalledPlaylist(
+            "/playlists/BeatSaver - ROCK.bplist_BMBF.json",
+            "BeatSaver - ROCK.bplist_BMBF.json",
+            "ROCK",
+            1,
+            QuestPlaylistFormat.BmbfJson,
+            NormalizedSongIdentities: [$"H:{HashA}"],
+            SemanticIdentityComplete: true,
+            FilenameLineage: "BeatSaver - ROCK.bplist");
+
+        var plan = SyncPlanner.Build([desired], new QuestLibrary(installedPlaylists: [quest]), EmptySet(), OnlineAvailability(HashA));
+
+        Assert.AreEqual(0, plan.Count(SyncOperationKind.ImportPlaylist));
+        Assert.AreEqual(1, plan.ExistingPlaylistCount);
+    }
+
+    [TestMethod]
+    public void SameTitleAndCountWithDifferentHashes_IsConflictNotEquality()
+    {
+        var desired = PlaylistWithSource("ROCK", "BeatSaver - ROCK.bplist", HashA);
+        var quest = new QuestInstalledPlaylist(
+            "/playlists/BeatSaver - ROCK.bplist_BMBF.json",
+            "BeatSaver - ROCK.bplist_BMBF.json",
+            "ROCK",
+            1,
+            QuestPlaylistFormat.BmbfJson,
+            NormalizedSongIdentities: [$"H:{HashB}"],
+            SemanticIdentityComplete: true,
+            FilenameLineage: "BeatSaver - ROCK.bplist");
+
+        var plan = SyncPlanner.Build([desired], new QuestLibrary(installedPlaylists: [quest]), EmptySet(), OnlineAvailability(HashA));
+
+        Assert.AreEqual(0, plan.Count(SyncOperationKind.ImportPlaylist));
+        Assert.AreEqual(1, plan.PlaylistConflictCount);
+    }
+
+    [TestMethod]
+    public void ChangedExistingPlaylist_IsPreservedWithoutSecondIngressFile()
+    {
+        var desired = new Playlist("ACG", sourcePath: Path.GetFullPath("BeatSaver - ACG.bplist"), sourceContentSha256: new string('A', 64));
+        for (var index = 0; index < 42; index++) desired.Add(new PlaylistEntry(index.ToString("X"), HashA, $"Song {index}"));
+        var questIdentities = Enumerable.Repeat($"H:{HashA}", 40).ToArray();
+        var quest = new QuestInstalledPlaylist(
+            "/playlists/BeatSaver - ACG.bplist_BMBF.json",
+            "BeatSaver - ACG.bplist_BMBF.json",
+            "ACG",
+            40,
+            QuestPlaylistFormat.BmbfJson,
+            NormalizedSongIdentities: questIdentities,
+            SemanticIdentityComplete: true,
+            FilenameLineage: "BeatSaver - ACG.bplist");
+
+        var plan = SyncPlanner.Build([desired], new QuestLibrary(installedPlaylists: [quest]), EmptySet(), OnlineAvailability(HashA));
+
+        Assert.AreEqual(1, plan.PlaylistConflictCount);
+        Assert.AreEqual(0, plan.Count(SyncOperationKind.ImportPlaylist));
+        StringAssert.Contains(plan.Operations.Single(operation => operation.Kind == SyncOperationKind.PlaylistConflict).Description, "Quest: 40 songs; desired: 42 songs");
+    }
+
     private static Scenario CreateScenario(string scenario) => scenario switch
     {
         "empty" => new([], new QuestLibrary(), EmptySet(), EmptyAvailability()),
@@ -169,6 +232,13 @@ public sealed class SyncPlannerTests
 
     private static PlaylistEntry Entry(string hash, string? key = null, string? title = null) =>
         new(key, hash, title ?? hash);
+
+    private static Playlist PlaylistWithSource(string name, string basename, string hash)
+    {
+        var playlist = new Playlist(name, sourcePath: Path.GetFullPath(basename), sourceContentSha256: new string('A', 64));
+        playlist.Add(Entry(hash));
+        return playlist;
+    }
 
     private static QuestInstalledMap Map(
         string hash,

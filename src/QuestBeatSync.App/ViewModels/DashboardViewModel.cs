@@ -99,6 +99,9 @@ public sealed class DashboardViewModel : ViewModelBase
     public string SelectedTransport => SelectedDevice?.TransportKind switch { QuestTransportKind.Usb => "USB", QuestTransportKind.Network => "Network", _ => "Unknown" };
     public string SelectedModel => string.IsNullOrWhiteSpace(SelectedDevice?.AndroidModel) ? "Unknown" : SelectedDevice.AndroidModel;
     public string BeatSaberStatus => !Library.ScanCompleted ? "Beat Saber not scanned" : _beatSaberDetected ? "Beat Saber detected" : "Beat Saber not detected";
+    public string BeatSaberVersionStatus => Library.ScanResult.BeatSaberPackageVersion is { } version
+        ? $"Beat Saber {version.VersionName} (versionCode {version.VersionCode?.ToString() ?? "unknown"})"
+        : "Beat Saber package version not scanned";
     public string SongCoreStatus => !Library.ScanCompleted ? "SongCore not scanned" : _songCoreDetected ? "SongCore detected" : "SongCore not detected";
     public string PlaylistManagerStatus => !Library.ScanCompleted ? "PlaylistManager not scanned" : _playlistManagerDetected ? "PlaylistManager detected" : "PlaylistManager not detected";
     public string WirelessHost { get => _wirelessHost; set { if (SetProperty(ref _wirelessHost, value)) ConnectCommand.RaiseCanExecuteChanged(); } }
@@ -243,7 +246,7 @@ public sealed class DashboardViewModel : ViewModelBase
         if (changed) Library.MarkStale(value is null ? "No Quest is selected; the displayed library is retained but stale." : "Device selected. Scan the Quest library before planning.");
         NotifyDevice();
     }
-    private void SetDetection(bool beatSaber, bool songCore, bool playlistManager) { _beatSaberDetected = beatSaber; _songCoreDetected = songCore; _playlistManagerDetected = playlistManager; OnPropertyChanged(nameof(BeatSaberStatus)); OnPropertyChanged(nameof(SongCoreStatus)); OnPropertyChanged(nameof(PlaylistManagerStatus)); }
+    private void SetDetection(bool beatSaber, bool songCore, bool playlistManager) { _beatSaberDetected = beatSaber; _songCoreDetected = songCore; _playlistManagerDetected = playlistManager; OnPropertyChanged(nameof(BeatSaberStatus)); OnPropertyChanged(nameof(BeatSaberVersionStatus)); OnPropertyChanged(nameof(SongCoreStatus)); OnPropertyChanged(nameof(PlaylistManagerStatus)); }
     private void NotifyDiscovery() { OnPropertyChanged(nameof(HasDevices)); OnPropertyChanged(nameof(HasMultipleDevices)); OnPropertyChanged(nameof(IsAdbUnavailable)); OnPropertyChanged(nameof(DeviceStatus)); NotifyDevice(); }
     private void NotifyDevice() { OnPropertyChanged(nameof(HasSelectedDevice)); OnPropertyChanged(nameof(SelectedSerial)); OnPropertyChanged(nameof(SelectedConnectionState)); OnPropertyChanged(nameof(SelectedTransport)); OnPropertyChanged(nameof(SelectedModel)); OnPropertyChanged(nameof(DeviceStatus)); NotifyWirelessCommands(); }
     private void NotifyWirelessCommands() { OnPropertyChanged(nameof(CanConnect)); OnPropertyChanged(nameof(CanEnableWireless)); OnPropertyChanged(nameof(CanScanLibrary)); ConnectCommand.RaiseCanExecuteChanged(); DisconnectCommand.RaiseCanExecuteChanged(); EnableWirelessCommand.RaiseCanExecuteChanged(); ScanLibraryCommand.RaiseCanExecuteChanged(); }

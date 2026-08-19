@@ -8,7 +8,12 @@ public enum SyncOperationKind
     KeepExisting,
     PreserveQuestOnly,
     SkipUnavailable,
-    SkipUnknown
+    SkipUnknown,
+    SkipIncompatible,
+    SkipCompatibilityUnknown,
+    KeepExistingPlaylist,
+    PlaylistConflict,
+    PlaylistAmbiguous
 }
 
 public sealed record SyncOperation(

@@ -40,7 +40,8 @@ public sealed partial class App : Application
             var connectionService = new AdbConnectionService(environment, processRunner, transportOptions);
             var scanner = new QuestBeatSaberScanner(
                 new AdbQuestRemoteFileSystem(transport),
-                QuestBeatSaberPaths.Default);
+                QuestBeatSaberPaths.Default,
+                new AdbBeatSaberPackageInspector(transport));
             var beatSaverClient = new BeatSaverClient(new HttpClient());
             var beatMapCache = new LocalBeatMapCache(
                 Path.Combine(appDataDirectory, "cache", "maps"),
@@ -51,7 +52,8 @@ public sealed partial class App : Application
                 beatMapCache,
                 new AdbQuestSyncTarget(transport, QuestBeatSaberPaths.Default),
                 new JsonSyncExecutionJournal(Path.Combine(appDataDirectory, "execution-journal")),
-                QuestBeatSaberPaths.Default);
+                QuestBeatSaberPaths.Default,
+                new LocalMapCompatibilityInspector());
 
             var viewModel = new MainWindowViewModel(
                 transport,

@@ -13,5 +13,8 @@ public sealed record QuestInstalledPlaylist(
     string PlaylistTitle,
     int SongReferenceCount,
     QuestPlaylistFormat Format,
-    string? Warning = null);
+    string? Warning = null,
+    IReadOnlyList<string>? NormalizedSongIdentities = null,
+    bool SemanticIdentityComplete = false,
+    string? FilenameLineage = null);
 

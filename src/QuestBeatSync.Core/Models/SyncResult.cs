@@ -23,7 +23,8 @@ public sealed record SyncOperationResult(
     int OperationIndex,
     SyncOperation Operation,
     SyncOperationStatus Status,
-    string? Message = null);
+    string? Message = null,
+    MapCompatibilityResult? Compatibility = null);
 
 public sealed record SyncResult(
     Guid ExecutionId,

@@ -15,5 +15,6 @@ public sealed record QuestInstalledMap(
     string? Mapper,
     QuestMapIdentityStatus IdentityStatus,
     BeatMapIdentity? Identity = null,
-    string? Warning = null);
+    string? Warning = null,
+    BeatMapFormatInfo? Format = null);
 

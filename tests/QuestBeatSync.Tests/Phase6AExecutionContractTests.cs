@@ -261,6 +261,20 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
+    public async Task BeatSaberPackageVersionChange_RefusesBeforeContentWrites()
+    {
+        var planned = ScanForBeatSaber("1.35.0_8016709773", 1130);
+        var updated = ScanForBeatSaber("1.36.0", 1200);
+        var fixture = CreateFixture(planned, Plan(Operation(SyncOperationKind.UploadMap, HashA)), currentScan: updated);
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncRunStatus.Refused, result.Status);
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+        Assert.AreEqual(0, fixture.Target.BeginCount);
+    }
+
+    [TestMethod]
     public async Task QuestChangeAfterWriterLock_RefusesAndReleasesWithoutContentWrites()
     {
         var stateA = EmptyScan();
@@ -301,6 +315,43 @@ public sealed class Phase6AExecutionContractTests
         Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
         Assert.AreEqual(1, fixture.Target.PromoteCount);
         Assert.AreEqual(1, fixture.Target.EndCount);
+    }
+
+    [TestMethod]
+    public async Task DownloadedV4Map_OnBeatSaber135_IsSkippedBeforeWriterSession()
+    {
+        var scan = ScanForBeatSaber("1.35.0_8016709773", 1130);
+        var plan = Plan(Operation(SyncOperationKind.DownloadMap, HashA), Operation(SyncOperationKind.UploadMap, HashA));
+        var fixture = CreateFixture(
+            scan,
+            plan,
+            lookups: new Dictionary<string, BeatSaverLookupResult> { [HashA] = ExactLookup(HashA) },
+            compatibilityInspector: new FixedCompatibilityInspector(MapCompatibilityStatus.Incompatible, BeatMapFormatKind.V4));
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.AreEqual(SyncOperationStatus.Skipped, result.Operations[1].Status);
+        Assert.AreEqual(MapCompatibilityStatus.Incompatible, result.Operations[1].Compatibility?.Status);
+        Assert.AreEqual(1, fixture.MapSources.DownloadCount);
+        Assert.AreEqual(0, fixture.Target.BeginCount);
+        Assert.AreEqual(0, fixture.Target.MutationCount);
+    }
+
+    [TestMethod]
+    public async Task CompatibilityUnknown_SkipsUploadBeforeWriterSession()
+    {
+        var fixture = CreateFixture(
+            ScanForBeatSaber("1.35.0_8016709773", 1130),
+            Plan(Operation(SyncOperationKind.UploadMap, HashA)),
+            compatibilityInspector: new FixedCompatibilityInspector(MapCompatibilityStatus.Unknown, BeatMapFormatKind.Unknown));
+
+        var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device());
+
+        Assert.AreEqual(SyncOperationStatus.Skipped, result.Operations[0].Status);
+        Assert.AreEqual(MapCompatibilityStatus.Unknown, result.Operations[0].Compatibility?.Status);
+        Assert.AreEqual(0, fixture.Target.BeginCount);
+        Assert.AreEqual(0, fixture.Target.MutationCount);
     }
 
     [TestMethod]
@@ -560,7 +611,8 @@ public sealed class Phase6AExecutionContractTests
         ISyncExecutionJournal? journal = null,
         QuestBeatSaberScanResult? writePhaseScan = null,
         QuestBeatSaberScanResult? lockedScan = null,
-        IReadOnlyDictionary<string, BeatSaverLookupResult>? lookups = null)
+        IReadOnlyDictionary<string, BeatSaverLookupResult>? lookups = null,
+        ILocalMapCompatibilityInspector? compatibilityInspector = null)
     {
         var events = new List<string>();
         var firstScan = currentScan ?? boundScan;
@@ -580,7 +632,8 @@ public sealed class Phase6AExecutionContractTests
             mapSources,
             target,
             journal ?? recordingJournal,
-            QuestBeatSaberPaths.Default);
+            QuestBeatSaberPaths.Default,
+            compatibilityInspector ?? new CompatibleMapInspector());
         return new ExecutionFixture(executor, executionPlan, scanner, target, mapSources, recordingJournal, events);
     }
 
@@ -612,6 +665,9 @@ public sealed class Phase6AExecutionContractTests
     private static QuestBeatSaberScanResult ScanWithMap(string hash) =>
         new(true, true, true, true, true,
             [new($"/maps/{hash}", hash, true, "Map", "Mapper", QuestMapIdentityStatus.HashIdentified, new BeatMapIdentity(hash))]);
+
+    private static QuestBeatSaberScanResult ScanForBeatSaber(string versionName, long versionCode) =>
+        new(true, true, true, true, true, beatSaberPackageVersion: BeatSaberPackageVersion.Create(versionName, versionCode));
 
     private static IReadOnlySet<string> EmptyHashes() => new HashSet<string>();
     private static IReadOnlyDictionary<string, BeatSaverAvailability> EmptyAvailability() => new Dictionary<string, BeatSaverAvailability>();
@@ -646,6 +702,23 @@ public sealed class Phase6AExecutionContractTests
             var result = results[Math.Min(CallCount, results.Length - 1)];
             CallCount++;
             return Task.FromResult(result);
+        }
+    }
+
+    private sealed class CompatibleMapInspector : ILocalMapCompatibilityInspector
+    {
+        public Task<MapCompatibilityResult> InspectAsync(string localMapDirectory, BeatSaberPackageVersion? target, CancellationToken cancellationToken = default) =>
+            Task.FromResult(MapCompatibilityPolicy.Evaluate(new BeatMapFormatInfo(BeatMapFormatKind.LegacyV2, new Version(2, 0, 0), "_version"), target));
+    }
+
+    private sealed class FixedCompatibilityInspector(MapCompatibilityStatus status, BeatMapFormatKind kind) : ILocalMapCompatibilityInspector
+    {
+        public Task<MapCompatibilityResult> InspectAsync(string localMapDirectory, BeatSaberPackageVersion? target, CancellationToken cancellationToken = default)
+        {
+            var format = kind == BeatMapFormatKind.Unknown
+                ? BeatMapFormatInfo.Unknown
+                : new BeatMapFormatInfo(kind, new Version(4, 0, 1), "version");
+            return Task.FromResult(new MapCompatibilityResult(status, format, target, "fixture compatibility"));
         }
     }
 

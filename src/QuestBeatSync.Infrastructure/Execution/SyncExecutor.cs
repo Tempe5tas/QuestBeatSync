@@ -14,6 +14,7 @@ public sealed class SyncExecutor
     private readonly IQuestSyncTarget _target;
     private readonly ISyncExecutionJournal _journal;
     private readonly QuestBeatSaberPaths _paths;
+    private readonly ILocalMapCompatibilityInspector _compatibilityInspector;
 
     public SyncExecutor(
         IQuestBeatSaberScanner scanner,
@@ -21,7 +22,8 @@ public sealed class SyncExecutor
         ISyncMapSourceProvider mapSources,
         IQuestSyncTarget target,
         ISyncExecutionJournal journal,
-        QuestBeatSaberPaths paths)
+        QuestBeatSaberPaths paths,
+        ILocalMapCompatibilityInspector compatibilityInspector)
     {
         _scanner = scanner ?? throw new ArgumentNullException(nameof(scanner));
         _playlistWorkspace = playlistWorkspace ?? throw new ArgumentNullException(nameof(playlistWorkspace));
@@ -29,6 +31,7 @@ public sealed class SyncExecutor
         _target = target ?? throw new ArgumentNullException(nameof(target));
         _journal = journal ?? throw new ArgumentNullException(nameof(journal));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _compatibilityInspector = compatibilityInspector ?? throw new ArgumentNullException(nameof(compatibilityInspector));
     }
 
     public async Task<SyncResult> ExecuteAsync(
@@ -158,6 +161,51 @@ public sealed class SyncExecutor
             {
                 blockedMaps.Add(identity.Hash);
                 results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message };
+            }
+        }
+
+        // Compatibility is a target-specific execution precondition. It is evaluated
+        // against the exact prepared bytes before any cooperative writer session begins.
+        foreach (var index in Enumerable.Range(0, results.Length)
+                     .Where(index => results[index].Status == SyncOperationStatus.Pending &&
+                                     results[index].Operation.Kind == SyncOperationKind.UploadMap))
+        {
+            var identity = results[index].Operation.MapIdentity!;
+            if (!preparedMaps.TryGetValue(identity.Hash, out var localPath)) continue;
+            MapCompatibilityResult compatibility;
+            try
+            {
+                compatibility = await _compatibilityInspector.InspectAsync(
+                    localPath,
+                    executionPlan.Target.BeatSaberPackageVersion,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                CancelPending();
+                return await FinishAsync(SyncRunStatus.Canceled, "Sync was canceled during map compatibility preflight.").ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                compatibility = new(
+                    MapCompatibilityStatus.Unknown,
+                    BeatMapFormatInfo.Unknown,
+                    executionPlan.Target.BeatSaberPackageVersion,
+                    $"Map compatibility inspection failed: {exception.Message}");
+            }
+
+            if (compatibility.Status != MapCompatibilityStatus.Compatible)
+            {
+                blockedMaps.Add(identity.Hash);
+                var action = compatibility.Status == MapCompatibilityStatus.Incompatible
+                    ? "Skip — target cannot safely load this map format."
+                    : "Skip — target compatibility could not be established safely.";
+                results[index] = results[index] with
+                {
+                    Status = SyncOperationStatus.Skipped,
+                    Message = $"Map format: {compatibility.Format.DisplayName}. Target Beat Saber: {compatibility.Target?.ParsedVersion?.ToString() ?? "Unknown"}. Compatibility: {compatibility.Status}. Action: {action}",
+                    Compatibility = compatibility
+                };
             }
         }
 

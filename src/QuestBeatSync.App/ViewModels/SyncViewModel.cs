@@ -93,6 +93,11 @@ public sealed class SyncViewModel : ViewModelBase
     public int Unavailable => Plan?.UnavailableCount ?? 0;
     public int Unknown => Plan?.UnknownCount ?? 0;
     public int QuestOnlyPreserved => Plan?.QuestOnlyPreservedCount ?? 0;
+    public int Incompatible => (Plan?.IncompatibleCount ?? 0) + (LastResult?.Operations.Count(result => result.Compatibility?.Status == MapCompatibilityStatus.Incompatible) ?? 0);
+    public int CompatibilityUnknown => (Plan?.CompatibilityUnknownCount ?? 0) + (LastResult?.Operations.Count(result => result.Compatibility?.Status == MapCompatibilityStatus.Unknown) ?? 0);
+    public int ExistingPlaylists => Plan?.ExistingPlaylistCount ?? 0;
+    public int PlaylistConflicts => Plan?.PlaylistConflictCount ?? 0;
+    public int PlaylistAmbiguous => Plan?.PlaylistAmbiguousCount ?? 0;
     public int DeletionCount => 0;
     public int SucceededCount => LastResult?.Operations.Count(result => result.Status == SyncOperationStatus.Succeeded) ?? 0;
     public int FailedCount => LastResult?.Operations.Count(result => result.Status == SyncOperationStatus.Failed) ?? 0;
@@ -317,6 +322,9 @@ public sealed class SyncViewModel : ViewModelBase
         OnPropertyChanged(nameof(UploadRequired)); OnPropertyChanged(nameof(PlaylistsToTransfer));
         OnPropertyChanged(nameof(Unavailable)); OnPropertyChanged(nameof(Unknown));
         OnPropertyChanged(nameof(QuestOnlyPreserved)); OnPropertyChanged(nameof(DeletionCount));
+        OnPropertyChanged(nameof(Incompatible)); OnPropertyChanged(nameof(CompatibilityUnknown));
+        OnPropertyChanged(nameof(ExistingPlaylists)); OnPropertyChanged(nameof(PlaylistConflicts));
+        OnPropertyChanged(nameof(PlaylistAmbiguous));
     }
 
     private void NotifyResult()
@@ -325,6 +333,7 @@ public sealed class SyncViewModel : ViewModelBase
         OnPropertyChanged(nameof(DiagnosticWarningsText)); OnPropertyChanged(nameof(ResultSummary));
         OnPropertyChanged(nameof(SucceededCount)); OnPropertyChanged(nameof(FailedCount));
         OnPropertyChanged(nameof(SkippedCount)); OnPropertyChanged(nameof(CanceledCount));
+        OnPropertyChanged(nameof(Incompatible)); OnPropertyChanged(nameof(CompatibilityUnknown));
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items)
@@ -334,5 +343,7 @@ public sealed class SyncViewModel : ViewModelBase
     }
 
     private static bool IsActionable(SyncOperationKind kind) =>
-        kind is SyncOperationKind.DownloadMap or SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist;
+        kind is SyncOperationKind.DownloadMap or SyncOperationKind.UploadMap or SyncOperationKind.ImportPlaylist or
+            SyncOperationKind.SkipIncompatible or SyncOperationKind.SkipCompatibilityUnknown or
+            SyncOperationKind.KeepExistingPlaylist or SyncOperationKind.PlaylistConflict or SyncOperationKind.PlaylistAmbiguous;
 }

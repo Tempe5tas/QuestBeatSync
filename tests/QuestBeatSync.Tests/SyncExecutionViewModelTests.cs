@@ -91,7 +91,8 @@ public sealed class SyncExecutionViewModelTests
             cache,
             target,
             new MemoryJournal(),
-            QuestBeatSaberPaths.Default);
+            QuestBeatSaberPaths.Default,
+            new CompatibleMapInspector());
         var scanCount = 0;
         var sync = new SyncViewModel(
             playlists,
@@ -144,6 +145,12 @@ public sealed class SyncExecutionViewModelTests
     private sealed class StubScanner(QuestBeatSaberScanResult result) : IQuestBeatSaberScanner
     {
         public Task<QuestBeatSaberScanResult> ScanAsync(QuestDevice device, CancellationToken cancellationToken = default) => Task.FromResult(result);
+    }
+
+    private sealed class CompatibleMapInspector : ILocalMapCompatibilityInspector
+    {
+        public Task<MapCompatibilityResult> InspectAsync(string localMapDirectory, BeatSaberPackageVersion? target, CancellationToken cancellationToken = default) =>
+            Task.FromResult(MapCompatibilityPolicy.Evaluate(new BeatMapFormatInfo(BeatMapFormatKind.LegacyV2, new Version(2, 0, 0), "_version"), target));
     }
 
     private sealed class RecordingTarget : IQuestSyncTarget

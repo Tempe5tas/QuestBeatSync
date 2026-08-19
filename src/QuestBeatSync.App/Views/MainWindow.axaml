@@ -152,6 +152,7 @@
               <ProgressBar IsIndeterminate="True" IsVisible="{Binding Dashboard.IsEnvironmentScanning}" />
               <TextBlock Foreground="#A9DDE0" Text="{Binding Library.ScanStateMessage}" TextWrapping="Wrap" />
               <TextBlock Text="{Binding Dashboard.BeatSaberStatus}" />
+              <TextBlock Foreground="#A9DDE0" Text="{Binding Dashboard.BeatSaberVersionStatus}" />
               <TextBlock Text="{Binding Dashboard.SongCoreStatus}" />
               <TextBlock Text="{Binding Dashboard.PlaylistManagerStatus}" />
               <TextBlock Text="{Binding Library.CustomLevelsDiagnostic, StringFormat='CustomLevels: {0}'}" />
@@ -450,11 +451,15 @@
             </Grid>
 
             <Border Padding="14" CornerRadius="8" BorderBrush="#5B9364" BorderThickness="1">
-              <TextBlock
-                  FontSize="18"
-                  FontWeight="SemiBold"
-                  Foreground="#55D98A"
-                  Text="{Binding Sync.DeletionCount, StringFormat='{}Deletion: {0}'}" />
+              <StackPanel Spacing="5">
+                <TextBlock FontWeight="SemiBold" Text="Map compatibility and playlist preservation" />
+                <TextBlock Text="{Binding Sync.Incompatible, StringFormat='{}Incompatible maps skipped: {0}'}" />
+                <TextBlock Text="{Binding Sync.CompatibilityUnknown, StringFormat='{}Compatibility unknown maps skipped: {0}'}" />
+                <TextBlock Text="{Binding Sync.ExistingPlaylists, StringFormat='{}Playlists already present: {0}'}" />
+                <TextBlock Text="{Binding Sync.PlaylistConflicts, StringFormat='{}Playlist conflicts preserved: {0}'}" />
+                <TextBlock Text="{Binding Sync.PlaylistAmbiguous, StringFormat='{}Ambiguous playlists preserved: {0}'}" />
+                <TextBlock FontSize="18" FontWeight="SemiBold" Foreground="#55D98A" Text="{Binding Sync.DeletionCount, StringFormat='{}Deletion: {0}'}" />
+              </StackPanel>
             </Border>
 
             <Border
@@ -474,6 +479,11 @@
                 <TextBlock Text="{Binding Sync.QuestOnlyPreserved, StringFormat='{}Quest-only maps preserved: {0}'}" />
                 <TextBlock Text="{Binding Sync.Unavailable, StringFormat='{}Unavailable maps skipped: {0}'}" />
                 <TextBlock Text="{Binding Sync.Unknown, StringFormat='{}Unknown maps skipped: {0}'}" />
+                <TextBlock Text="{Binding Sync.Incompatible, StringFormat='{}Incompatible maps skipped: {0}'}" />
+                <TextBlock Text="{Binding Sync.CompatibilityUnknown, StringFormat='{}Compatibility unknown maps skipped: {0}'}" />
+                <TextBlock Text="{Binding Sync.ExistingPlaylists, StringFormat='{}Playlists already present: {0}'}" />
+                <TextBlock Text="{Binding Sync.PlaylistConflicts, StringFormat='{}Playlist conflicts preserved: {0}'}" />
+                <TextBlock Text="{Binding Sync.PlaylistAmbiguous, StringFormat='{}Ambiguous playlists preserved: {0}'}" />
                 <TextBlock FontSize="18" FontWeight="Bold" Foreground="#55D98A" Text="Maps to delete: 0" />
                 <TextBlock Foreground="#D7A95B" Text="Beat Saber will be force-stopped. It will not be relaunched automatically." TextWrapping="Wrap" />
                 <StackPanel Orientation="Horizontal" Spacing="8">

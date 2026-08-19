@@ -24,8 +24,12 @@ public static class QuestExecutionPaths
     public static string BuildManagedPlaylistFileName(string canonicalSourcePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(canonicalSourcePath);
-        var safeName = MakeSafeName(Path.GetFileNameWithoutExtension(canonicalSourcePath));
-        return $"qbsync-{StableSourceId(canonicalSourcePath)}-{safeName}.bplist";
+        var basename = Path.GetFileName(canonicalSourcePath);
+        if (string.IsNullOrWhiteSpace(basename) || basename is "." or ".." ||
+            !basename.EndsWith(".bplist", StringComparison.OrdinalIgnoreCase) ||
+            basename.Any(character => character == '\0' || char.IsControl(character) || character is '/' or '\\'))
+            throw new InvalidOperationException("Playlist source basename is unsafe for the Quest PlaylistManager ingress directory.");
+        return basename;
     }
 
     public static bool IsOwnedMapStagingPath(QuestBeatSaberPaths paths, string remotePath) =>
@@ -78,13 +82,6 @@ public static class QuestExecutionPaths
     {
         var stablePath = OperatingSystem.IsWindows() ? canonicalPath.ToUpperInvariant() : canonicalPath;
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(stablePath)))[..16];
-    }
-
-    private static string MakeSafeName(string value)
-    {
-        var characters = value.Select(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' ? character : '-').ToArray();
-        var normalized = new string(characters).Trim('-');
-        return string.IsNullOrEmpty(normalized) ? "playlist" : normalized[..Math.Min(normalized.Length, 48)];
     }
 
     private static bool TryGetDirectChild(string parent, string path, out string name)

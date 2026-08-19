@@ -204,6 +204,30 @@ public sealed class QuestBeatSaberScannerTests
             result.InstalledPlaylists.Select(playlist => playlist.Format).ToArray());
     }
 
+    [TestMethod]
+    public async Task RawAndBmbfRepresentationsOfSameSemanticPlaylistBecomeOneLogicalEntry()
+    {
+        const string hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        var fixture = CreateDetectedEnvironment();
+        fixture.AddFile(
+            QuestBeatSaberPaths.Default.Playlists,
+            "BeatSaver - ROCK.bplist",
+            $$"""{"playlistTitle":"ROCK","songs":[{"hash":"{{hash}}"}]}""");
+        fixture.AddFile(
+            QuestBeatSaberPaths.Default.Playlists,
+            "BeatSaver - ROCK.bplist_BMBF.json",
+            $$"""{"playlistTitle":"ROCK","songs":[{"hash":"{{hash}}"}]}""");
+
+        var result = await CreateScanner(fixture).ScanAsync(Device);
+
+        Assert.HasCount(1, result.InstalledPlaylists);
+        var playlist = result.InstalledPlaylists[0];
+        Assert.AreEqual(QuestPlaylistFormat.BmbfJson, playlist.Format);
+        Assert.IsTrue(playlist.SemanticIdentityComplete);
+        CollectionAssert.AreEqual(new[] { $"H:{hash}" }, playlist.NormalizedSongIdentities!.ToArray());
+        Assert.AreEqual("BeatSaver - ROCK.bplist", playlist.FilenameLineage);
+    }
+
     private static FixtureQuestRemoteFileSystem CreateDetectedEnvironment()
     {
         var fixture = new FixtureQuestRemoteFileSystem();

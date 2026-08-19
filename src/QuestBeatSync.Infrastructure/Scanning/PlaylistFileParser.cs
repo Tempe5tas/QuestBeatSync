@@ -6,7 +6,10 @@ namespace QuestBeatSync.Infrastructure.Scanning;
 public sealed record PlaylistFileMetadata(
     string PlaylistTitle,
     int SongReferenceCount,
-    string? Warning = null);
+    string? Warning = null,
+    IReadOnlyList<string>? NormalizedSongIdentities = null,
+    bool SemanticIdentityComplete = false,
+    string? FilenameLineage = null);
 
 public static class PlaylistFileParser
 {
@@ -39,7 +42,14 @@ public static class PlaylistFileParser
                 ? "Playlist JSON has no recognized song reference array."
                 : null;
 
-            metadata = new PlaylistFileMetadata(title, songCount ?? 0, schemaWarning);
+            var identities = GetSongIdentities(root, SongCollectionProperties, out var complete);
+            metadata = new PlaylistFileMetadata(
+                title,
+                songCount ?? 0,
+                schemaWarning,
+                identities,
+                songCount is not null && complete,
+                GetFilenameLineage(filename));
             warning = schemaWarning;
             return true;
         }
@@ -55,7 +65,7 @@ public static class PlaylistFileParser
         out PlaylistFileMetadata metadata,
         out string? warning)
     {
-        metadata = new PlaylistFileMetadata(GetFallbackTitle(filename), 0, message);
+        metadata = new PlaylistFileMetadata(GetFallbackTitle(filename), 0, message, [], false, GetFilenameLineage(filename));
         warning = message;
         return false;
     }
@@ -87,6 +97,44 @@ public static class PlaylistFileParser
         }
 
         return null;
+    }
+
+    private static IReadOnlyList<string> GetSongIdentities(JsonElement root, IEnumerable<string> names, out bool complete)
+    {
+        complete = false;
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!names.Any(name => string.Equals(name, property.Name, StringComparison.OrdinalIgnoreCase)) ||
+                property.Value.ValueKind != JsonValueKind.Array) continue;
+            var result = new List<string>();
+            complete = true;
+            foreach (var song in property.Value.EnumerateArray())
+            {
+                if (song.ValueKind != JsonValueKind.Object)
+                {
+                    complete = false;
+                    continue;
+                }
+                var hash = GetString(song, ["hash", "_hash", "levelHash"]);
+                var key = GetString(song, ["key", "_key", "mapKey", "levelId"]);
+                if (hash is not null && BeatSaverHash.TryNormalize(hash, out var normalizedHash))
+                    result.Add($"H:{normalizedHash}");
+                else if (key is not null)
+                    result.Add($"K:{key.ToUpperInvariant()}");
+                else
+                    complete = false;
+            }
+            return result.Order(StringComparer.Ordinal).ToArray();
+        }
+        return [];
+    }
+
+    public static string GetFilenameLineage(string filename)
+    {
+        const string bmbfSuffix = "_BMBF.json";
+        return filename.EndsWith(bmbfSuffix, StringComparison.OrdinalIgnoreCase)
+            ? filename[..^bmbfSuffix.Length]
+            : filename;
     }
 
     private static string GetFallbackTitle(string filename)

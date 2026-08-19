@@ -7,13 +7,16 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
 {
     private readonly IQuestRemoteFileSystem _fileSystem;
     private readonly QuestBeatSaberPaths _paths;
+    private readonly IBeatSaberPackageInspector? _packageInspector;
 
     public QuestBeatSaberScanner(
         IQuestRemoteFileSystem fileSystem,
-        QuestBeatSaberPaths paths)
+        QuestBeatSaberPaths paths,
+        IBeatSaberPackageInspector? packageInspector = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _packageInspector = packageInspector;
     }
 
     public async Task<QuestBeatSaberScanResult> ScanAsync(
@@ -26,6 +29,9 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             device,
             _paths.BeatSaberModData,
             cancellationToken).ConfigureAwait(false);
+        var packageVersion = beatSaberDetected && _packageInspector is not null
+            ? await _packageInspector.InspectAsync(device, cancellationToken).ConfigureAwait(false)
+            : null;
         var songCoreDetected = beatSaberDetected && await _fileSystem.DirectoryExistsAsync(
             device,
             _paths.SongCore,
@@ -60,7 +66,8 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             mapScan.Maps,
             playlists,
             warnings,
-            mapScan.FolderCount);
+            mapScan.FolderCount,
+            packageVersion);
     }
 
     private async Task<MapScanResult> ScanMapsAsync(
@@ -159,7 +166,8 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                 identity is null
                     ? QuestMapIdentityStatus.LocalOnly
                     : QuestMapIdentityStatus.HashIdentified,
-                identity);
+                identity,
+                Format: metadata.Format);
         }
         catch (QuestRemoteFileSystemException exception)
         {
@@ -204,7 +212,10 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                 cancellationToken).ConfigureAwait(false));
         }
 
-        return playlists;
+        return playlists
+            .GroupBy(PlaylistLogicalKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(item => item.Format == QuestPlaylistFormat.BmbfJson).First())
+            .ToArray();
     }
 
     private async Task<QuestInstalledPlaylist> ScanPlaylistAsync(
@@ -233,7 +244,10 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                 metadata.PlaylistTitle,
                 metadata.SongReferenceCount,
                 format,
-                metadata.Warning);
+                metadata.Warning,
+                metadata.NormalizedSongIdentities,
+                metadata.SemanticIdentityComplete,
+                metadata.FilenameLineage);
         }
         catch (QuestRemoteFileSystemException exception)
         {
@@ -244,7 +258,10 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                 GetFallbackPlaylistTitle(filename),
                 0,
                 format,
-                exception.Message);
+                exception.Message,
+                [],
+                false,
+                PlaylistFileParser.GetFilenameLineage(filename));
         }
     }
 
@@ -277,6 +294,14 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
         BeatSaverHash.TryNormalize(folderName, out var hash)
             ? new BeatMapIdentity(hash)
             : null;
+
+    private static string PlaylistLogicalKey(QuestInstalledPlaylist playlist)
+    {
+        var semantic = playlist.SemanticIdentityComplete
+            ? string.Join("|", playlist.NormalizedSongIdentities ?? [])
+            : $"path:{playlist.RemotePath}";
+        return $"{playlist.PlaylistTitle.Trim()}\n{semantic}";
+    }
 
     private static string GetRemoteName(string remotePath)
     {

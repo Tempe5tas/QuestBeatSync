@@ -138,7 +138,7 @@ public sealed class AdbQuestSyncTargetTests
     }
 
     [TestMethod]
-    public async Task PreparedPlaylistSnapshot_IsTransferredAndStableSourceNamesDoNotCollide()
+    public async Task PreparedPlaylistSnapshot_PreservesOriginalBasenameAndRefusesCollision()
     {
         var snapshot = Path.Combine(_temporaryRoot, "snapshot.bplist");
         await File.WriteAllTextAsync(snapshot, "approved bytes");
@@ -150,13 +150,13 @@ public sealed class AdbQuestSyncTargetTests
         var target = CreateTarget(transport);
 
         await target.ImportPlaylistAsync(Device, first);
-        await target.ImportPlaylistAsync(Device, second);
+        await Assert.ThrowsAsync<QuestSyncTargetException>(() => target.ImportPlaylistAsync(Device, second));
 
-        Assert.AreNotEqual(firstName, secondName);
-        Assert.AreEqual(2, transport.Pushes.Count);
+        Assert.AreEqual("foo.bplist", firstName);
+        Assert.AreEqual(firstName, secondName);
+        Assert.AreEqual(1, transport.Pushes.Count);
         Assert.IsTrue(transport.Pushes.All(push => push.LocalPath == snapshot));
         Assert.IsTrue(transport.RemoteFiles.Keys.Any(path => path.EndsWith(firstName, StringComparison.Ordinal)));
-        Assert.IsTrue(transport.RemoteFiles.Keys.Any(path => path.EndsWith(secondName, StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -174,6 +174,17 @@ public sealed class AdbQuestSyncTargetTests
 
         Assert.AreEqual(0, transport.Pushes.Count);
         CollectionAssert.AreEqual("existing"u8.ToArray(), transport.RemoteFiles[finalPath]);
+    }
+
+    [TestMethod]
+    public void UnsafePlaylistBasename_IsRejectedWithoutRemotePathConstruction()
+    {
+        var unsafePath = Path.Combine(_temporaryRoot, "unsafe\nname.bplist");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            QuestExecutionPaths.BuildManagedPlaylistFileName(unsafePath));
+
+        StringAssert.Contains(exception.Message, "unsafe");
     }
 
     [TestMethod]

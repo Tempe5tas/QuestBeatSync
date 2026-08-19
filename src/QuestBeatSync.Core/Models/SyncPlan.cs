@@ -34,6 +34,16 @@ public sealed class SyncPlan
 
     public int QuestOnlyPreservedCount => Count(SyncOperationKind.PreserveQuestOnly);
 
+    public int IncompatibleCount => Count(SyncOperationKind.SkipIncompatible);
+
+    public int CompatibilityUnknownCount => Count(SyncOperationKind.SkipCompatibilityUnknown);
+
+    public int ExistingPlaylistCount => Count(SyncOperationKind.KeepExistingPlaylist);
+
+    public int PlaylistConflictCount => Count(SyncOperationKind.PlaylistConflict);
+
+    public int PlaylistAmbiguousCount => Count(SyncOperationKind.PlaylistAmbiguous);
+
     public int DeletionCount => 0;
 
     public void Add(SyncOperation operation)
