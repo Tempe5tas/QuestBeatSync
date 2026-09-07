@@ -209,6 +209,75 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         return true;
     }
 
+    public Task<IReadOnlyList<MapStructureValidationResult>> ValidateStagedMapsAsync(
+        QuestDevice device,
+        IReadOnlyList<MapWritePathBinding> maps,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(maps);
+        foreach (var map in maps)
+        {
+            var identity = ParseOwnedMapStaging(map.Path);
+            if (identity != map.Identity)
+                throw new InvalidOperationException("Map staging identity does not match the requested map identity.");
+        }
+        return ValidateMapStructuresAsync(device, maps, requireOwnedStaging: true, cancellationToken);
+    }
+
+    public async Task<MapPromotionResult> PromoteStagingCompactAsync(
+        QuestDevice device,
+        MapPromotionRequest map,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        var stagingIdentity = ParseOwnedMapStaging(map.StagingPath);
+        var finalIdentity = ParseMapFinal(map.FinalPath);
+        if (stagingIdentity != map.Identity || finalIdentity != map.Identity)
+            throw new InvalidOperationException("Map staging and final destination identities do not match.");
+
+        var hash = map.Identity.Hash;
+        var script =
+            $"if test -e {Quote(map.FinalPath)}; then printf '%s\\n' {Quote($"__QBSYNC_PROMOTE__|{hash}|FINAL_ALREADY_EXISTS")}; " +
+            $"elif test ! -d {Quote(map.StagingPath)}; then printf '%s\\n' {Quote($"__QBSYNC_PROMOTE__|{hash}|STAGING_MISSING")}; " +
+            $"else toybox mv -nT {Quote(map.StagingPath)} {Quote(map.FinalPath)}; rc=$?; " +
+            $"if test -d {Quote(map.StagingPath)}; then s=1; else s=0; fi; " +
+            $"if test -d {Quote(map.FinalPath)}; then f=1; else f=0; fi; " +
+            $"if [ \"$rc\" -eq 0 ] && [ \"$s\" -eq 0 ] && [ \"$f\" -eq 1 ]; then printf '%s\\n' {Quote($"__QBSYNC_PROMOTE__|{hash}|PROMOTED")}; " +
+            $"elif [ \"$s\" -eq \"$f\" ]; then printf '%s\\n' {Quote($"__QBSYNC_PROMOTE__|{hash}|AMBIGUOUS")}; " +
+            $"else printf '__QBSYNC_PROMOTE__|{hash}|ERROR:%s\\n' \"$rc\"; fi; fi";
+        var command = await RunScriptAsync(device, script, cancellationToken).ConfigureAwait(false);
+        EnsureProbeCommandSucceeded(command, "Map promotion transaction failed.");
+        var prefix = $"__QBSYNC_PROMOTE__|{hash}|";
+        var lines = command.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length != 1 || !lines[0].StartsWith(prefix, StringComparison.Ordinal))
+            return new(map.Identity, MapPromotionStatus.Ambiguous, "Promotion returned malformed or ambiguous sentinel output.");
+        var value = lines[0][prefix.Length..];
+        return value switch
+        {
+            "PROMOTED" => new(map.Identity, MapPromotionStatus.Promoted),
+            "FINAL_ALREADY_EXISTS" => new(map.Identity, MapPromotionStatus.FinalAlreadyExists),
+            "STAGING_MISSING" => new(map.Identity, MapPromotionStatus.StagingMissing),
+            "AMBIGUOUS" => new(map.Identity, MapPromotionStatus.Ambiguous),
+            _ when value.StartsWith("ERROR:", StringComparison.Ordinal) => new(map.Identity, MapPromotionStatus.Failed, value),
+            _ => new(map.Identity, MapPromotionStatus.Ambiguous, $"Unexpected promotion sentinel: {value}")
+        };
+    }
+
+    public Task<IReadOnlyList<MapStructureValidationResult>> VerifyFinalMapsAsync(
+        QuestDevice device,
+        IReadOnlyList<MapWritePathBinding> maps,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(maps);
+        foreach (var map in maps)
+        {
+            var identity = ParseMapFinal(map.Path);
+            if (identity != map.Identity)
+                throw new InvalidOperationException("Final map path does not match the requested map identity.");
+        }
+        return ValidateMapStructuresAsync(device, maps, requireOwnedStaging: false, cancellationToken);
+    }
+
     public async Task AbandonStagingAsync(
         QuestDevice device,
         string stagingPath,
@@ -330,6 +399,65 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         var result = await RunScriptAsync(device, $"find {Quote(path)} -type f -print", cancellationToken).ConfigureAwait(false);
         EnsureSuccess(result, $"Could not inspect transferred files under {path}.");
         return result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private async Task<IReadOnlyList<MapStructureValidationResult>> ValidateMapStructuresAsync(
+        QuestDevice device,
+        IReadOnlyList<MapWritePathBinding> maps,
+        bool requireOwnedStaging,
+        CancellationToken cancellationToken)
+    {
+        if (maps.Count == 0) return [];
+        if (maps.Select(map => map.Identity.Hash).Distinct(StringComparer.OrdinalIgnoreCase).Count() != maps.Count)
+            throw new InvalidOperationException("A map validation batch cannot contain duplicate identities.");
+
+        var script = string.Join(' ', maps.Select(map =>
+        {
+            if (requireOwnedStaging) EnsureOwnedMapStaging(map.Path); else _ = ParseMapFinal(map.Path);
+            var prefix = $"__QBSYNC_MAP__|{map.Identity.Hash}|";
+            return $"if test ! -d {Quote(map.Path)}; then printf '%s\\n' {Quote(prefix + "MISSING_DIRECTORY")}; " +
+                   $"elif ! find {Quote(map.Path)} -type f -iname 'Info.dat' -print -quit | grep -q .; then printf '%s\\n' {Quote(prefix + "MISSING_INFO")}; " +
+                   $"elif ! find {Quote(map.Path)} -type f ! -iname 'Info.dat' -print -quit | grep -q .; then printf '%s\\n' {Quote(prefix + "NO_OTHER_FILES")}; " +
+                   $"else printf '%s\\n' {Quote(prefix + "OK")}; fi;";
+        }));
+        var command = await RunScriptAsync(device, script, cancellationToken).ConfigureAwait(false);
+        EnsureProbeCommandSucceeded(command, "Batched map structure validation failed.");
+        return ParseMapValidationOutput(maps, command.StandardOutput);
+    }
+
+    internal static IReadOnlyList<MapStructureValidationResult> ParseMapValidationOutput(
+        IReadOnlyList<MapWritePathBinding> maps,
+        string output)
+    {
+        const string prefix = "__QBSYNC_MAP__|";
+        var expected = maps.ToDictionary(map => map.Identity.Hash, StringComparer.OrdinalIgnoreCase);
+        var values = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        var malformed = false;
+        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.StartsWith(prefix, StringComparison.Ordinal)) { malformed = true; continue; }
+            var parts = line[prefix.Length..].Split('|');
+            if (parts.Length != 2 || !expected.ContainsKey(parts[0])) { malformed = true; continue; }
+            if (!values.TryGetValue(parts[0], out var statuses)) values[parts[0]] = statuses = [];
+            statuses.Add(parts[1]);
+        }
+
+        return maps.Select(map =>
+        {
+            if (malformed) return new MapStructureValidationResult(map.Identity, MapStructureValidationStatus.InvalidResponse, "Unexpected batch sentinel output.");
+            if (!values.TryGetValue(map.Identity.Hash, out var statuses))
+                return new(map.Identity, MapStructureValidationStatus.InvalidResponse, "Validation result was missing.");
+            if (statuses.Count != 1)
+                return new(map.Identity, MapStructureValidationStatus.InvalidResponse, "Validation result was duplicated.");
+            return statuses[0] switch
+            {
+                "OK" => new(map.Identity, MapStructureValidationStatus.Valid),
+                "MISSING_DIRECTORY" => new(map.Identity, MapStructureValidationStatus.MissingDirectory),
+                "MISSING_INFO" => new(map.Identity, MapStructureValidationStatus.MissingInfoDat),
+                "NO_OTHER_FILES" => new(map.Identity, MapStructureValidationStatus.NoOtherFiles),
+                _ => new(map.Identity, MapStructureValidationStatus.InvalidResponse, $"Unexpected validation sentinel: {statuses[0]}")
+            };
+        }).ToArray();
     }
 
     private async Task RunRequiredScriptAsync(QuestDevice device, string script, string message, CancellationToken cancellationToken)

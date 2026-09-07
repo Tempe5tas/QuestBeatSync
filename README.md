@@ -1,7 +1,7 @@
 # QuestBeatSync
 
 > [!WARNING]
-> QuestBeatSync is early software. A real Quest canary was performed and exposed target-map compatibility and playlist-identity failures. Phase 6 is **not accepted** until the follow-up canary passes.
+> QuestBeatSync is early software. The Phase 6 desktop, read, compatibility-gated write, and playlist workflow has completed its follow-up real-Quest acceptance. Phase 7A archives have not yet been manually validated on a real Quest.
 
 QuestBeatSync (QBSync) is a preservation-first Windows and Linux desktop application for managing native Quest Beat Saber custom maps and PlaylistManager playlists through ADB. Normal sync never deletes existing Quest maps or playlists.
 
@@ -19,7 +19,22 @@ The first real write canary proved that a structurally valid BeatSaver map can s
 
 QBSync now parses only root-level `Info.dat` format properties and keeps BeatSaver availability separate from target compatibility. V4 maps are incompatible on Beat Saber versions earlier than 1.36. V4 maps on a missing/unparseable target version, or on a newer APK without proven SongCore capability, remain compatibility-unknown and are not uploaded. The exact prepared local bytes are inspected before a writer lock is acquired; a useful completed download may remain cached even when its upload is skipped.
 
-The follow-up real Quest write path is **not yet validated**.
+The follow-up real Quest Phase 6 workflow has been accepted from a clean library baseline.
+
+## Read-only backup archives (Phase 7A)
+
+The **Backup** page creates an explicit, read-only local snapshot of these user-library sources:
+
+- SongCore `CustomLevels`, including hash-named, legacy, unknown, nested, Unicode, and case-sensitive content.
+- Every regular file below PlaylistManager `Playlists`, regardless of extension or whether QBSync understands it.
+- Every regular file below PlaylistManager `Covers`, when present.
+- SongCore `CachedSongData.json`, when present, as non-authoritative auxiliary state.
+
+Files are pulled one at a time to generated host-safe staging names and hashed with streaming SHA-256. Exact bytes are stored as immutable content-addressed blobs under `blobs/sha256`; manifests retain the original Quest-relative filename and refer to blobs by hash. Identical files across snapshots reuse one blob, and existing blob contents are verified before reuse. Unknown or non-hash content is preserved because raw bytes—not parser success—are authoritative.
+
+Backup performs a fresh scan before capture and another after capture using the same device serial, Beat Saber package version, and Quest scan fingerprint binding used by sync. If the source changes, no snapshot manifest is published. Completed manifests are published atomically only after all entries are pulled and committed. Snapshot verification is entirely local and checks manifest paths, duplicate logical paths, blob presence, size, and SHA-256.
+
+Phase 7A performs zero Quest library writes: no push, deletion, move, directory creation, playlist import, writer lock, force-stop, or cleanup on the Quest. Restore is **NOT IMPLEMENTED**.
 
 ## Playlist identity and lifecycle
 
@@ -58,6 +73,10 @@ QBSync prepares network/cache inputs and immutable playlist snapshots before ope
 
 A mismatch at any validation refuses execution without map or playlist content writes and asks the user to rebuild. The writer lock is released best-effort; journal and cleanup failures remain diagnostic warnings and cannot rewrite primary operation truth.
 
+Large map writes use staged bulk scheduling. Eligible maps are uploaded sequentially into exact current-execution staging directories first; staging structure and promoted final structure are then validated in bounded batches of 32 to reduce short ADB shell round trips. The batch size keeps remote scripts bounded while reducing validation calls substantially for 100–200-map runs.
+
+Promotion remains an independent no-clobber transaction per map using the existing `toybox mv -nT` capability requirement. Batching does not make the write set atomic: one failed map does not roll back unrelated successful maps, and cancellation preserves every already promoted final directory while cleaning only current-execution staging best-effort. No concurrent push swarm or new destructive behavior was introduced.
+
 Map uploads use QBSync-owned staging, validate basic structure, and use no-clobber promotion. Existing final maps and existing PlaylistManager destinations are preserved. A pre-existing writer lock is never automatically removed as stale.
 
 ## Build and test
@@ -73,23 +92,24 @@ dotnet run --project src/QuestBeatSync.App/QuestBeatSync.App.csproj
 
 Automated tests use fakes for Quest, ADB, and network boundaries. They must not access or mutate a real Quest, use the real internet, or depend on a locally installed ADB.
 
-## Follow-up manual canary checklist
+## Phase 7A manual backup acceptance checklist
 
-This checklist is intentionally manual and has not yet passed:
+This checklist is intentionally manual and has not yet been run for Phase 7A:
 
 1. Start QBSync.
 2. Confirm ADB Ready.
-3. Discover/connect the Quest through the UI.
-4. Confirm connection alone does not trigger a full library scan.
-5. On Beat Saber 1.35, verify V4.0.1 regression map `73F85C364E9C4EF7EE99FFF551BD3431D237B209` is classified incompatible and receives zero uploads.
-6. Verify Beat Saber still launches and that map is absent from `CustomLevels`.
-7. Import and execute one known-compatible Legacy V2 map; verify launch, visibility, and playability.
-8. Verify a semantically equal existing ROCK `_BMBF.json` causes zero playlist imports and no duplicate ROCK.
-9. Verify changed ACG content is reported as update-required/conflict, with the existing ACG preserved and no duplicate created.
-10. Import one genuinely new playlist and verify its ingress uses the original `.bplist` basename.
-11. Manually launch Beat Saber and observe PlaylistManager's native `_BMBF.json` conversion.
-12. Verify no current execution staging remains, the writer lock is gone, old Quest-only maps remain, and Delete is 0.
+3. Note the scanned map and playlist counts.
+4. Create a backup and verify the snapshot completes.
+5. Run local **Verify Backup** and confirm it succeeds.
+6. Confirm snapshot metadata matches the selected Quest.
+7. Confirm a known hash map exists in the manifest.
+8. If available, confirm at least one non-hash or unknown item is preserved.
+9. Confirm playlists and covers are represented.
+10. Confirm Quest content is untouched from the user's perspective and Beat Saber still launches.
+11. Create a second backup without library changes and confirm blob reuse instead of full duplication.
+12. Deliberately change one library item, create another backup, and confirm only changed/new blobs materially grow storage.
+13. Do not test restore; restore does not exist in Phase 7A.
 
 ## Out of scope
 
-Backup/restore, destructive map or playlist updates, stale-lock recovery, `adb pair`, companion APKs, cloud sync, BeatSaver accounts, crash resume, and automatic Beat Saber launch are not implemented. Phase 7 has not started.
+Restore, archive deletion/garbage collection, destructive map or playlist updates, stale-lock recovery, `adb pair`, companion APKs, cloud sync, BeatSaver accounts, crash resume, and automatic Beat Saber launch are not implemented.

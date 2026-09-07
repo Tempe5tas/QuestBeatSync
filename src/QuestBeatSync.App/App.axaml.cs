@@ -10,6 +10,7 @@ using QuestBeatSync.Infrastructure.Scanning;
 using QuestBeatSync.Infrastructure.BeatSaver;
 using QuestBeatSync.Infrastructure.Cache;
 using QuestBeatSync.Infrastructure.Execution;
+using QuestBeatSync.Infrastructure.Backup;
 
 namespace QuestBeatSync.App;
 
@@ -54,6 +55,11 @@ public sealed partial class App : Application
                 new JsonSyncExecutionJournal(Path.Combine(appDataDirectory, "execution-journal")),
                 QuestBeatSaberPaths.Default,
                 new LocalMapCompatibilityInspector());
+            var archiveStore = new ContentAddressedArchiveStore(Path.Combine(appDataDirectory, "archives"));
+            var backupService = new QuestBackupService(
+                scanner,
+                new AdbQuestBackupSource(transport, QuestBeatSaberPaths.Default),
+                archiveStore);
 
             var viewModel = new MainWindowViewModel(
                 transport,
@@ -65,7 +71,8 @@ public sealed partial class App : Application
                 settingsStore,
                 syncExecutor,
                 environment,
-                connectionService);
+                connectionService,
+                backupService);
             desktop.MainWindow = new MainWindow
             {
                 DataContext = viewModel

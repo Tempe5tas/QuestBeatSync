@@ -470,7 +470,7 @@ public sealed class Phase6AExecutionContractTests
     }
 
     [TestMethod]
-    public async Task CancelAfterCompletedMap_PreservesSucceededResultWithoutRollback()
+    public async Task CancelDuringBatchStaging_CancelsUnpromotedMapsAndCleansStaging()
     {
         using var cancellation = new CancellationTokenSource();
         var fixture = CreateFixture(EmptyScan(), Plan(
@@ -482,9 +482,9 @@ public sealed class Phase6AExecutionContractTests
         var result = await fixture.Executor.ExecuteAsync(fixture.Plan, Device(), cancellation.Token);
 
         Assert.AreEqual(SyncRunStatus.Canceled, result.Status);
-        Assert.AreEqual(SyncOperationStatus.Succeeded, result.Operations[0].Status);
+        Assert.AreEqual(SyncOperationStatus.Canceled, result.Operations[0].Status);
         Assert.AreEqual(SyncOperationStatus.Canceled, result.Operations[1].Status);
-        Assert.IsTrue(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashA}"));
+        Assert.IsFalse(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashA}"));
         Assert.IsFalse(fixture.Target.Directories.Contains($"{QuestBeatSaberPaths.Default.CustomLevels}/{HashB}"));
         Assert.AreEqual(1, fixture.Target.EndCount);
     }

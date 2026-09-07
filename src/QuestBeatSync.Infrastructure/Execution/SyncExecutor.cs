@@ -5,6 +5,8 @@ namespace QuestBeatSync.Infrastructure.Execution;
 
 public sealed class SyncExecutor
 {
+    // Keeps generated remote scripts comfortably bounded while reducing validation round trips by ~32x.
+    internal const int MapValidationBatchSize = 32;
     private static readonly IReadOnlySet<string> ExcludedMapFiles =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".qbsync-complete" };
 
@@ -166,6 +168,7 @@ public sealed class SyncExecutor
 
         // Compatibility is a target-specific execution precondition. It is evaluated
         // against the exact prepared bytes before any cooperative writer session begins.
+        progress?.Report(new SyncProgress("Compatibility preflight", 0, results.Length, "Checking prepared maps against the target Beat Saber version."));
         foreach (var index in Enumerable.Range(0, results.Length)
                      .Where(index => results[index].Status == SyncOperationStatus.Pending &&
                                      results[index].Operation.Kind == SyncOperationKind.UploadMap))
@@ -286,46 +289,27 @@ public sealed class SyncExecutor
                     !executionPlan.Target.Matches(selectedDevice.Serial, lockedScan))
                     lockedValidationRefusal = "Quest state changed after writer lock acquisition. Rebuild the plan.";
 
-                foreach (var index in lockedValidationCanceled || lockedValidationRefusal is not null ? [] : writeIndexes)
+                if (!lockedValidationCanceled && lockedValidationRefusal is null)
                 {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        CancelPending();
-                        canceledDuringWrites = true;
-                        break;
-                    }
+                    var mapIndexes = writeIndexes.Where(index => results[index].Operation.Kind == SyncOperationKind.UploadMap).ToArray();
+                    canceledDuringWrites = await ExecuteMapWritesAsync(
+                        results, mapIndexes, selectedDevice, executionId, preparedMaps, blockedMaps,
+                        diagnosticWarnings, cancellationToken, progress,
+                        () => TryWriteJournalAsync(SyncRunStatus.Running, null)).ConfigureAwait(false);
 
-                    var operation = results[index].Operation;
-                    progress?.Report(new SyncProgress(ProgressPhase(operation.Kind), index + 1, results.Length, operation.Description, operation));
-                    results[index] = results[index] with { Status = SyncOperationStatus.Running };
-                    await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
-                    try
+                    foreach (var index in writeIndexes.Where(index => results[index].Operation.Kind == SyncOperationKind.ImportPlaylist))
                     {
-                        results[index] = operation.Kind switch
-                        {
-                            SyncOperationKind.UploadMap => await UploadAsync(results[index], selectedDevice, executionId, preparedMaps, blockedMaps, diagnosticWarnings, cancellationToken).ConfigureAwait(false),
-                            SyncOperationKind.ImportPlaylist => await ImportPlaylistAsync(results[index], selectedDevice, preparedPlaylists, cancellationToken).ConfigureAwait(false),
-                            _ => throw new InvalidOperationException("Only Quest write operations may enter the write phase.")
-                        };
+                        if (canceledDuringWrites || cancellationToken.IsCancellationRequested) { canceledDuringWrites = true; CancelPending(); break; }
+                        var operation = results[index].Operation;
+                        progress?.Report(new SyncProgress("Importing playlists", index + 1, results.Length, operation.Description, operation));
+                        results[index] = results[index] with { Status = SyncOperationStatus.Running };
+                        await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
+                        try { results[index] = await ImportPlaylistAsync(results[index], selectedDevice, preparedPlaylists, cancellationToken).ConfigureAwait(false); }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { results[index] = results[index] with { Status = SyncOperationStatus.Canceled, Message = "Operation was canceled." }; CancelPending(); canceledDuringWrites = true; break; }
+                        catch (Exception exception) { results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message }; }
+                        finally { foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning); }
+                        await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
                     }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        results[index] = results[index] with { Status = SyncOperationStatus.Canceled, Message = "Operation was canceled." };
-                        CancelPending();
-                        canceledDuringWrites = true;
-                        break;
-                    }
-                    catch (Exception exception)
-                    {
-                        if (operation.MapIdentity is not null) blockedMaps.Add(operation.MapIdentity.Hash);
-                        results[index] = results[index] with { Status = SyncOperationStatus.Failed, Message = exception.Message };
-                    }
-                    finally
-                    {
-                        foreach (var warning in _target.DrainDiagnosticWarnings()) diagnosticWarnings.Add(warning);
-                    }
-
-                    await TryWriteJournalAsync(SyncRunStatus.Running, null).ConfigureAwait(false);
                 }
             }
             finally
@@ -444,58 +428,137 @@ public sealed class SyncExecutor
         return result with { Status = SyncOperationStatus.Succeeded };
     }
 
-    private async Task<SyncOperationResult> UploadAsync(
-        SyncOperationResult result,
+    private async Task<bool> ExecuteMapWritesAsync(
+        SyncOperationResult[] results,
+        IReadOnlyList<int> mapIndexes,
         QuestDevice device,
         Guid executionId,
-        IDictionary<string, string> preparedMaps,
-        ISet<string> blockedMaps,
+        IReadOnlyDictionary<string, string> preparedMaps,
+        IReadOnlySet<string> blockedMaps,
         ICollection<string> diagnosticWarnings,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SyncProgress>? progress,
+        Func<Task> checkpoint)
     {
-        var identity = result.Operation.MapIdentity ?? throw new InvalidOperationException("UploadMap requires an exact map identity.");
-        if (blockedMaps.Contains(identity.Hash))
-            return result with { Status = SyncOperationStatus.Skipped, Message = "The exact map source could not be prepared." };
-
-        var finalPath = QuestExecutionPaths.MapFinal(_paths, identity);
-        if (await _target.DirectoryExistsAsync(device, finalPath, cancellationToken).ConfigureAwait(false))
-            return result with { Status = SyncOperationStatus.Skipped, Message = "Final map directory already exists; it was preserved." };
-
-        if (!preparedMaps.TryGetValue(identity.Hash, out var localPath))
-            return result with { Status = SyncOperationStatus.Failed, Message = "The exact map source was not prepared before the Quest write session." };
-
-        var stagingPath = QuestExecutionPaths.MapStaging(_paths, identity, executionId);
-        var stagingCreated = false;
-        try
+        var writes = mapIndexes.Select(index =>
         {
-            await _target.CreateStagingDirectoryAsync(device, stagingPath, cancellationToken).ConfigureAwait(false);
-            stagingCreated = true;
-            await _target.UploadMapDirectoryAsync(device, localPath, stagingPath, ExcludedMapFiles, cancellationToken).ConfigureAwait(false);
-            if (!await _target.VerifyStagedMapStructureAsync(device, stagingPath, identity, cancellationToken).ConfigureAwait(false))
-                return result with { Status = SyncOperationStatus.Failed, Message = "Staged map verification failed." };
-            if (await _target.DirectoryExistsAsync(device, finalPath, cancellationToken).ConfigureAwait(false))
-                return result with { Status = SyncOperationStatus.Skipped, Message = "Final map directory appeared during upload; it was preserved." };
+            var identity = results[index].Operation.MapIdentity ?? throw new InvalidOperationException("UploadMap requires an exact map identity.");
+            return new PreparedMapWrite(index, identity,
+                preparedMaps.TryGetValue(identity.Hash, out var local) ? local : null,
+                QuestExecutionPaths.MapStaging(_paths, identity, executionId),
+                QuestExecutionPaths.MapFinal(_paths, identity));
+        }).ToArray();
 
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!await _target.TryPromoteStagingAsync(device, stagingPath, finalPath, CancellationToken.None).ConfigureAwait(false))
-                return result with { Status = SyncOperationStatus.Skipped, Message = "Final map directory already exists; it was preserved." };
-
-            stagingCreated = false;
-            return result with { Status = SyncOperationStatus.Succeeded };
-        }
-        finally
+        for (var position = 0; position < writes.Length; position++)
         {
-            if (stagingCreated)
+            var write = writes[position];
+            if (cancellationToken.IsCancellationRequested) return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false);
+            progress?.Report(new SyncProgress("Uploading maps", position + 1, writes.Length, $"Uploading maps {position + 1}/{writes.Length}", results[write.OperationIndex].Operation));
+            if (blockedMaps.Contains(write.Identity.Hash)) { results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Skipped, Message = "The exact map source could not be prepared." }; write.State = PreparedMapWriteState.Skipped; continue; }
+            if (write.LocalPath is null) { results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Failed, Message = "The exact map source was not prepared before the Quest write session." }; write.State = PreparedMapWriteState.Failed; continue; }
+            results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Running };
+            try
             {
-                try
+                if (await _target.DirectoryExistsAsync(device, write.FinalPath, cancellationToken).ConfigureAwait(false))
+                { results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Skipped, Message = "Final map directory already exists; it was preserved." }; write.State = PreparedMapWriteState.Skipped; continue; }
+                await _target.CreateStagingDirectoryAsync(device, write.StagingPath, cancellationToken).ConfigureAwait(false);
+                write.StagingMayExist = true;
+                write.State = PreparedMapWriteState.StagingCreated;
+                await _target.UploadMapDirectoryAsync(device, write.LocalPath, write.StagingPath, ExcludedMapFiles, cancellationToken).ConfigureAwait(false);
+                write.State = PreparedMapWriteState.Uploaded;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            { results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Canceled, Message = "Operation was canceled." }; return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false); }
+            catch (Exception exception)
+            { results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Failed, Message = exception.Message }; write.State = PreparedMapWriteState.Failed; await CleanupStagingAsync(write, device, diagnosticWarnings).ConfigureAwait(false); }
+            await checkpoint().ConfigureAwait(false);
+        }
+
+        foreach (var batch in writes.Where(write => write.State == PreparedMapWriteState.Uploaded).Chunk(MapValidationBatchSize))
+        {
+            if (cancellationToken.IsCancellationRequested) return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false);
+            progress?.Report(new SyncProgress("Validating staged maps", Math.Min(writes.Length, writes.Count(write => write.State is PreparedMapWriteState.Validated or PreparedMapWriteState.Promoted or PreparedMapWriteState.FinalVerified) + batch.Length), writes.Length, $"Validating a batch of {batch.Length} staged maps."));
+            IReadOnlyList<MapStructureValidationResult> validations;
+            try { validations = await _target.ValidateStagedMapsAsync(device, batch.Select(write => new MapWritePathBinding(write.Identity, write.StagingPath)).ToArray(), cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false); }
+            catch (Exception exception) { validations = batch.Select(write => new MapStructureValidationResult(write.Identity, MapStructureValidationStatus.InvalidResponse, exception.Message)).ToArray(); }
+            foreach (var write in batch)
+            {
+                var matches = validations.Where(value => value.Identity == write.Identity).ToArray();
+                var validation = matches.Length == 1 ? matches[0] : new(write.Identity, MapStructureValidationStatus.InvalidResponse, "Batch validation result was missing or duplicated.");
+                if (validation.IsValid) write.State = PreparedMapWriteState.Validated;
+                else
                 {
-                    await _target.AbandonStagingAsync(device, stagingPath, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    diagnosticWarnings.Add($"Current map staging could not be cleaned: {exception.Message}");
+                    results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Failed, Message = $"Staged map validation failed: {validation.Status}. {validation.Diagnostic}".Trim() };
+                    write.State = PreparedMapWriteState.Failed; await CleanupStagingAsync(write, device, diagnosticWarnings).ConfigureAwait(false);
                 }
             }
+        }
+
+        var promotable = writes.Where(write => write.State == PreparedMapWriteState.Validated).ToArray();
+        for (var position = 0; position < promotable.Length; position++)
+        {
+            if (cancellationToken.IsCancellationRequested) return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false);
+            var write = promotable[position];
+            progress?.Report(new SyncProgress("Promoting maps", position + 1, promotable.Length, $"Promoting maps {position + 1}/{promotable.Length}", results[write.OperationIndex].Operation));
+            try
+            {
+                var promotion = await _target.PromoteStagingCompactAsync(device, new(write.Identity, write.StagingPath, write.FinalPath), CancellationToken.None).ConfigureAwait(false);
+                if (promotion.WasPromoted) { write.State = PreparedMapWriteState.Promoted; write.StagingMayExist = false; }
+                else
+                {
+                    results[write.OperationIndex] = results[write.OperationIndex] with
+                    {
+                        Status = promotion.Status == MapPromotionStatus.FinalAlreadyExists ? SyncOperationStatus.Skipped : SyncOperationStatus.Failed,
+                        Message = promotion.Status == MapPromotionStatus.FinalAlreadyExists ? "Final map directory appeared before promotion; it was preserved." : $"Map promotion failed closed: {promotion.Status}. {promotion.Diagnostic}".Trim()
+                    };
+                    write.State = PreparedMapWriteState.Failed; await CleanupStagingAsync(write, device, diagnosticWarnings).ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception) { results[write.OperationIndex] = results[write.OperationIndex] with { Status = SyncOperationStatus.Failed, Message = exception.Message }; write.State = PreparedMapWriteState.Failed; await CleanupStagingAsync(write, device, diagnosticWarnings).ConfigureAwait(false); }
+            await checkpoint().ConfigureAwait(false);
+        }
+
+        foreach (var batch in writes.Where(write => write.State == PreparedMapWriteState.Promoted).Chunk(MapValidationBatchSize))
+        {
+            if (cancellationToken.IsCancellationRequested) return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false);
+            progress?.Report(new SyncProgress("Verifying promoted maps", Math.Min(writes.Length, writes.Count(write => write.State == PreparedMapWriteState.FinalVerified) + batch.Length), writes.Length, $"Verifying a batch of {batch.Length} promoted maps."));
+            IReadOnlyList<MapStructureValidationResult> validations;
+            try { validations = await _target.VerifyFinalMapsAsync(device, batch.Select(write => new MapWritePathBinding(write.Identity, write.FinalPath)).ToArray(), cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return await CancelMapWritesAsync(writes, results, device, diagnosticWarnings).ConfigureAwait(false); }
+            catch (Exception exception) { validations = batch.Select(write => new MapStructureValidationResult(write.Identity, MapStructureValidationStatus.InvalidResponse, exception.Message)).ToArray(); }
+            foreach (var write in batch)
+            {
+                var matches = validations.Where(value => value.Identity == write.Identity).ToArray();
+                var validation = matches.Length == 1 ? matches[0] : new(write.Identity, MapStructureValidationStatus.InvalidResponse, "Final validation result was missing or duplicated.");
+                write.State = validation.IsValid ? PreparedMapWriteState.FinalVerified : PreparedMapWriteState.Failed;
+                results[write.OperationIndex] = validation.IsValid
+                    ? results[write.OperationIndex] with { Status = SyncOperationStatus.Succeeded, Message = "Map was promoted and final structure was verified." }
+                    : results[write.OperationIndex] with { Status = SyncOperationStatus.Failed, Message = $"Map promotion succeeded, but final verification failed: {validation.Status}. The final directory was preserved. {validation.Diagnostic}".Trim() };
+            }
+            await checkpoint().ConfigureAwait(false);
+        }
+        return false;
+
+        async Task<bool> CancelMapWritesAsync(IEnumerable<PreparedMapWrite> allWrites, SyncOperationResult[] operationResults, QuestDevice targetDevice, ICollection<string> warnings)
+        {
+            foreach (var item in allWrites)
+            {
+                if (item.State is PreparedMapWriteState.StagingCreated or PreparedMapWriteState.Uploaded or PreparedMapWriteState.Validated)
+                    await CleanupStagingAsync(item, targetDevice, warnings).ConfigureAwait(false);
+                if (item.State == PreparedMapWriteState.Promoted)
+                { operationResults[item.OperationIndex] = operationResults[item.OperationIndex] with { Status = SyncOperationStatus.Failed, Message = "Map promotion succeeded; final verification was canceled and the final directory was preserved." }; item.State = PreparedMapWriteState.Failed; }
+                else if (operationResults[item.OperationIndex].Status is SyncOperationStatus.Pending or SyncOperationStatus.Running)
+                { operationResults[item.OperationIndex] = operationResults[item.OperationIndex] with { Status = SyncOperationStatus.Canceled, Message = "Sync was canceled before this map completed." }; item.State = PreparedMapWriteState.Canceled; }
+            }
+            return true;
+        }
+
+        async Task CleanupStagingAsync(PreparedMapWrite item, QuestDevice targetDevice, ICollection<string> warnings)
+        {
+            if (!item.StagingMayExist) return;
+            try { await _target.AbandonStagingAsync(targetDevice, item.StagingPath, CancellationToken.None).ConfigureAwait(false); }
+            catch (Exception exception) { warnings.Add($"Current map staging could not be cleaned: {exception.Message}"); }
         }
     }
 
@@ -523,11 +586,16 @@ public sealed class SyncExecutor
         string.Equals(lookup.ResolvedHash, identity.Hash, StringComparison.OrdinalIgnoreCase) &&
         lookup.DownloadUri is not null;
 
-    private static string ProgressPhase(SyncOperationKind kind) => kind switch
+    private sealed class PreparedMapWrite(int operationIndex, BeatMapIdentity identity, string? localPath, string stagingPath, string finalPath)
     {
-        SyncOperationKind.DownloadMap => "Downloading",
-        SyncOperationKind.UploadMap => "Uploading and verifying",
-        SyncOperationKind.ImportPlaylist => "Transferring playlist",
-        _ => "Reviewing"
-    };
+        public int OperationIndex { get; } = operationIndex;
+        public BeatMapIdentity Identity { get; } = identity;
+        public string? LocalPath { get; } = localPath;
+        public string StagingPath { get; } = stagingPath;
+        public string FinalPath { get; } = finalPath;
+        public PreparedMapWriteState State { get; set; }
+        public bool StagingMayExist { get; set; }
+    }
+
+    private enum PreparedMapWriteState { Pending, StagingCreated, Uploaded, Validated, Promoted, FinalVerified, Failed, Canceled, Skipped }
 }
