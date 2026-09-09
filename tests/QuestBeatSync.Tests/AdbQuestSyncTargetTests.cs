@@ -248,6 +248,67 @@ public sealed class AdbQuestSyncTargetTests
     }
 
     [TestMethod]
+    public async Task StaleSameHostWriterLock_IsRecoveredBeforeForceStop()
+    {
+        var transport = LockedTransport(424242, Environment.MachineName, Device.Serial);
+        var unrelated = $"{QuestBeatSaberPaths.Default.BeatSaberModData}/user-content";
+        transport.Directories.Add(unrelated);
+        var target = CreateTarget(transport, _ => false);
+
+        var result = await target.BeginWriteSessionAsync(Device, Guid.NewGuid());
+
+        Assert.IsTrue(result.IsReady);
+        Assert.AreEqual(1, transport.RecoveryAttemptCount);
+        Assert.IsTrue(transport.Directories.Contains(unrelated));
+        Assert.IsTrue(transport.DirectCommands.Contains("am force-stop com.beatgames.beatsaber"));
+        Assert.IsTrue(target.DrainDiagnosticWarnings().Any(warning => warning.Contains("Recovered a stale", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task LiveSameHostWriterProcess_IsNeverUnlocked()
+    {
+        var transport = LockedTransport(1234, Environment.MachineName, Device.Serial);
+        var result = await CreateTarget(transport, pid => pid == 1234).BeginWriteSessionAsync(Device, Guid.NewGuid());
+
+        Assert.IsFalse(result.IsReady);
+        StringAssert.Contains(result.Message, "still appears to be active");
+        Assert.AreEqual(0, transport.RecoveryAttemptCount);
+        Assert.IsTrue(transport.Directories.Contains(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)));
+        Assert.IsFalse(transport.DirectCommands.Any(command => command.StartsWith("am force-stop", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task ForeignHostOrDeviceAndMalformedMetadata_ArePreserved()
+    {
+        foreach (var transport in new[]
+                 {
+                     LockedTransport(12, "ANOTHER-HOST", Device.Serial),
+                     LockedTransport(12, Environment.MachineName, "OTHER-DEVICE"),
+                     LockedTransportWithRawMetadata("not-json")
+                 })
+        {
+            var result = await CreateTarget(transport, _ => false).BeginWriteSessionAsync(Device, Guid.NewGuid());
+            Assert.IsFalse(result.IsReady);
+            Assert.AreEqual(0, transport.RecoveryAttemptCount);
+            Assert.IsTrue(transport.Directories.Contains(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)));
+        }
+    }
+
+    [TestMethod]
+    public async Task MetadataChangingDuringRecovery_FailsClosedWithoutForceStop()
+    {
+        var transport = LockedTransport(424242, Environment.MachineName, Device.Serial);
+        transport.ChangeMetadataDuringRecovery = true;
+        var result = await CreateTarget(transport, _ => false).BeginWriteSessionAsync(Device, Guid.NewGuid());
+
+        Assert.IsFalse(result.IsReady);
+        StringAssert.Contains(result.Message, "changed during recovery");
+        Assert.AreEqual(1, transport.RecoveryAttemptCount);
+        Assert.IsTrue(transport.Directories.Contains(QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default)));
+        Assert.IsFalse(transport.DirectCommands.Any(command => command.StartsWith("am force-stop", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task WriterLockMetadataAndReleaseFailures_AreDiagnosticOnly()
     {
         var transport = new StatefulTransport { FailMetadata = true, FailRemove = true };
@@ -338,8 +399,23 @@ public sealed class AdbQuestSyncTargetTests
         return root;
     }
 
-    private static AdbQuestSyncTarget CreateTarget(StatefulTransport transport) =>
-        new(transport, QuestBeatSaberPaths.Default);
+    private static AdbQuestSyncTarget CreateTarget(StatefulTransport transport, Func<int, bool>? isProcessAlive = null) =>
+        new(transport, QuestBeatSaberPaths.Default, isProcessAlive);
+
+    private static StatefulTransport LockedTransport(int pid, string host, string deviceSerial) =>
+        LockedTransportWithRawMetadata(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            executionId = Guid.NewGuid(), deviceSerial, startedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5), host, pid
+        }));
+
+    private static StatefulTransport LockedTransportWithRawMetadata(string metadata)
+    {
+        var transport = new StatefulTransport();
+        var lockPath = QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default);
+        transport.Directories.Add(lockPath);
+        transport.RemoteFiles[$"{lockPath}/session.json"] = System.Text.Encoding.UTF8.GetBytes(metadata);
+        return transport;
+    }
 
     private sealed class StatefulTransport : IQuestTransport
     {
@@ -361,6 +437,8 @@ public sealed class AdbQuestSyncTargetTests
         public bool FailMetadata { get; set; }
         public bool LeavePartialOnCanceledPush { get; set; }
         public Action? BeforeMove { get; set; }
+        public bool ChangeMetadataDuringRecovery { get; set; }
+        public int RecoveryAttemptCount { get; private set; }
         private bool _removeAttempted;
 
         public Task<QuestDeviceDiscoveryResult> GetDevicesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -368,6 +446,10 @@ public sealed class AdbQuestSyncTargetTests
         public Task<AdbCommandResult> ExecuteShellAsync(QuestDevice device, IReadOnlyList<string> arguments, CancellationToken cancellationToken = default)
         {
             if (arguments.SequenceEqual(["toybox", "mv", "--help"])) return Success(MoveHelp);
+            if (arguments.Count == 2 && arguments[0] == "cat")
+                return RemoteFiles.TryGetValue(arguments[1], out var content)
+                    ? Success(System.Text.Encoding.UTF8.GetString(content))
+                    : Task.FromResult(Failed("metadata missing"));
             if (arguments.Count >= 3 && arguments[0] == "am")
             {
                 DirectCommands.Add(string.Join(' ', arguments));
@@ -376,6 +458,15 @@ public sealed class AdbQuestSyncTargetTests
 
             var script = arguments[2];
             var paths = QuotedPath.Matches(script).Select(match => match.Groups[1].Value).ToArray();
+            if (script.StartsWith("if test ! -f", StringComparison.Ordinal))
+            {
+                RecoveryAttemptCount++;
+                if (ChangeMetadataDuringRecovery) return Success("__QBSYNC_RECOVERY_CHANGED__");
+                var lockPath = QuestExecutionPaths.WriterLock(QuestBeatSaberPaths.Default);
+                RemoveTree(lockPath);
+                Directories.Add(lockPath);
+                return Success("__QBSYNC_RECOVERED__");
+            }
             if (script.StartsWith("if mkdir", StringComparison.Ordinal))
                 return Success(Directories.Add(paths[0]) ? "__QBSYNC_ACQUIRED__" : "__QBSYNC_LOCKED__");
             if (script.StartsWith("if test -", StringComparison.Ordinal) && FailProbeAfterRemove && _removeAttempted)

@@ -77,7 +77,9 @@ Large map writes use staged bulk scheduling. Eligible maps are uploaded sequenti
 
 Promotion remains an independent no-clobber transaction per map using the existing `toybox mv -nT` capability requirement. Batching does not make the write set atomic: one failed map does not roll back unrelated successful maps, and cancellation preserves every already promoted final directory while cleaning only current-execution staging best-effort. No concurrent push swarm or new destructive behavior was introduced.
 
-Map uploads use QBSync-owned staging, validate basic structure, and use no-clobber promotion. Existing final maps and existing PlaylistManager destinations are preserved. A pre-existing writer lock is never automatically removed as stale.
+Map uploads use QBSync-owned staging, validate basic structure, and use no-clobber promotion. Existing final maps and existing PlaylistManager destinations are preserved.
+
+If QBSync previously terminated unexpectedly, the next sync may recover its writer lock only when `session.json` proves that the lock belongs to the same device identity and current computer, and the recorded host PID no longer exists. Missing/malformed metadata, a live process, a different computer/device, or metadata changing during recovery preserves the lock and refuses the sync. Recovery removes only the fixed QBSync writer-lock directory; it never touches maps, playlists, or arbitrary staging.
 
 ## Build and test
 
@@ -112,4 +114,4 @@ This checklist is intentionally manual and has not yet been run for Phase 7A:
 
 ## Out of scope
 
-Restore, archive deletion/garbage collection, destructive map or playlist updates, stale-lock recovery, `adb pair`, companion APKs, cloud sync, BeatSaver accounts, crash resume, and automatic Beat Saber launch are not implemented.
+Restore, archive deletion/garbage collection, destructive map or playlist updates, arbitrary/foreign lock recovery, `adb pair`, companion APKs, cloud sync, BeatSaver accounts, crash resume, and automatic Beat Saber launch are not implemented.

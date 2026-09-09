@@ -3,6 +3,7 @@ using QuestBeatSync.Infrastructure.Abstractions;
 using QuestBeatSync.Infrastructure.Adb;
 using QuestBeatSync.Infrastructure.Scanning;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace QuestBeatSync.Infrastructure.Execution;
@@ -14,11 +15,13 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
     private readonly QuestBeatSaberPaths _paths;
     private readonly ConcurrentQueue<string> _diagnosticWarnings = new();
     private readonly ConcurrentDictionary<Guid, byte> _ownedWriteSessions = new();
+    private readonly Func<int, bool> _isProcessAlive;
 
-    public AdbQuestSyncTarget(IQuestTransport transport, QuestBeatSaberPaths paths)
+    public AdbQuestSyncTarget(IQuestTransport transport, QuestBeatSaberPaths paths, Func<int, bool>? isProcessAlive = null)
     {
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
+        _isProcessAlive = isProcessAlive ?? IsProcessAlive;
     }
 
     public IReadOnlyList<string> DrainDiagnosticWarnings()
@@ -54,8 +57,11 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         var outcome = acquire.StandardOutput.Trim();
         if (outcome == "__QBSYNC_LOCKED__")
         {
-            return QuestWritePreparationResult.Refused(
-                "Another QBSync write session appears to be active, or a previous run left a stale lock.");
+            var recovery = await TryRecoverStaleWriterLockAsync(device, lockPath, cancellationToken).ConfigureAwait(false);
+            if (!recovery.Recovered)
+                return QuestWritePreparationResult.Refused(recovery.Message);
+            outcome = "__QBSYNC_ACQUIRED__";
+            _diagnosticWarnings.Enqueue("Recovered a stale QBSync writer lock left by a terminated process on this computer.");
         }
         if (outcome != "__QBSYNC_ACQUIRED__")
             throw new QuestSyncTargetException($"Writer lock acquisition returned an unexpected result: {outcome}");
@@ -399,6 +405,65 @@ public sealed class AdbQuestSyncTarget : IQuestSyncTarget
         var result = await RunScriptAsync(device, $"find {Quote(path)} -type f -print", cancellationToken).ConfigureAwait(false);
         EnsureSuccess(result, $"Could not inspect transferred files under {path}.");
         return result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private async Task<StaleLockRecoveryResult> TryRecoverStaleWriterLockAsync(
+        QuestDevice device,
+        string lockPath,
+        CancellationToken cancellationToken)
+    {
+        var metadataPath = $"{lockPath}/session.json";
+        var read = await _transport.ExecuteShellAsync(device, ["cat", metadataPath], cancellationToken).ConfigureAwait(false);
+        if (!read.IsSuccess || string.IsNullOrWhiteSpace(read.StandardOutput) || read.StandardOutput.Length > 8192)
+            return StaleLockRecoveryResult.Refused("Another QBSync write session lock exists, but its ownership metadata cannot be safely verified. No lock was removed.");
+
+        WriterLockMetadata? metadata;
+        try { metadata = JsonSerializer.Deserialize<WriterLockMetadata>(read.StandardOutput, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch (JsonException) { metadata = null; }
+        if (metadata is null || metadata.ExecutionId == Guid.Empty || metadata.StartedAtUtc == default || metadata.Pid <= 0 ||
+            string.IsNullOrWhiteSpace(metadata.Host) || string.IsNullOrWhiteSpace(metadata.DeviceSerial))
+            return StaleLockRecoveryResult.Refused("A QBSync writer lock exists with invalid ownership metadata. No lock was removed.");
+        if (!string.Equals(metadata.Host, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+            return StaleLockRecoveryResult.Refused("A QBSync writer lock belongs to another computer and was preserved.");
+        if (!string.Equals(metadata.DeviceSerial, device.Serial, StringComparison.Ordinal))
+            return StaleLockRecoveryResult.Refused("A QBSync writer lock does not match the selected device identity and was preserved.");
+        if (_isProcessAlive(metadata.Pid))
+            return StaleLockRecoveryResult.Refused("Another QBSync writer process on this computer still appears to be active.");
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var exactMetadata = read.StandardOutput;
+        var recoveryScript =
+            $"if test ! -f {Quote(metadataPath)}; then printf '%s' '__QBSYNC_RECOVERY_UNVERIFIABLE__'; " +
+            $"elif [ \"$(cat {Quote(metadataPath)})\" != {Quote(exactMetadata)} ]; then printf '%s' '__QBSYNC_RECOVERY_CHANGED__'; " +
+            $"elif rm -r {Quote(lockPath)} && mkdir {Quote(lockPath)}; then printf '%s' '__QBSYNC_RECOVERED__'; " +
+            $"elif test -d {Quote(lockPath)}; then printf '%s' '__QBSYNC_RECOVERY_LOCKED__'; " +
+            "else printf '%s' '__QBSYNC_RECOVERY_ERROR__'; fi";
+        // Once started, observe this short remove-and-reacquire transaction to avoid leaving an
+        // empty, ownerless lock if cancellation arrives between its two remote operations.
+        var recovery = await RunScriptAsync(device, recoveryScript, CancellationToken.None).ConfigureAwait(false);
+        EnsureProbeCommandSucceeded(recovery, "Could not safely recover the stale QBSync writer lock.");
+        return recovery.StandardOutput.Trim() switch
+        {
+            "__QBSYNC_RECOVERED__" => StaleLockRecoveryResult.Success,
+            "__QBSYNC_RECOVERY_CHANGED__" => StaleLockRecoveryResult.Refused("The QBSync writer lock changed during recovery and was preserved."),
+            "__QBSYNC_RECOVERY_LOCKED__" => StaleLockRecoveryResult.Refused("Another QBSync writer acquired the lock during recovery."),
+            "__QBSYNC_RECOVERY_UNVERIFIABLE__" => StaleLockRecoveryResult.Refused("The QBSync writer lock became unverifiable during recovery."),
+            _ => StaleLockRecoveryResult.Refused("The stale QBSync writer lock could not be safely recovered.")
+        };
+    }
+
+    private static bool IsProcessAlive(int pid)
+    {
+        try { using var process = Process.GetProcessById(pid); return !process.HasExited; }
+        catch (ArgumentException) { return false; }
+        catch { return true; }
+    }
+
+    private sealed record WriterLockMetadata(Guid ExecutionId, string DeviceSerial, DateTimeOffset StartedAtUtc, string Host, int Pid);
+    private sealed record StaleLockRecoveryResult(bool Recovered, string Message)
+    {
+        public static StaleLockRecoveryResult Success { get; } = new(true, "Stale writer lock recovered.");
+        public static StaleLockRecoveryResult Refused(string message) => new(false, message);
     }
 
     private async Task<IReadOnlyList<MapStructureValidationResult>> ValidateMapStructuresAsync(
