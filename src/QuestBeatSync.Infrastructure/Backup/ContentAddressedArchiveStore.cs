@@ -116,11 +116,11 @@ public sealed class ContentAddressedArchiveStore : IArchiveStore
         foreach (var directory in Directory.EnumerateDirectories(snapshots))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var id = Path.GetFileName(directory);
-            var verification = await VerifySnapshotAsync(id, cancellationToken).ConfigureAwait(false);
+            var manifestPath = Path.Combine(directory, "manifest.json");
+            if (!File.Exists(manifestPath)) continue;
             try
             {
-                await using var stream = File.OpenRead(Path.Combine(directory, "manifest.json"));
+                await using var stream = new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
                 var manifest = await JsonSerializer.DeserializeAsync<ArchiveManifest>(stream, _json, cancellationToken).ConfigureAwait(false);
                 if (manifest is null) continue;
                 results.Add(new(manifest.CreatedAtUtc, manifest.SnapshotId, manifest.Device.Serial,
@@ -128,7 +128,8 @@ public sealed class ContentAddressedArchiveStore : IArchiveStore
                     manifest.Entries.Where(e => e.LogicalRoot == ArchiveLogicalRoot.CustomLevels)
                         .Select(e => e.RelativePath.Split('/')[0]).Distinct(StringComparer.Ordinal).Count(),
                     manifest.Entries.Count(e => e.LogicalRoot == ArchiveLogicalRoot.Playlists),
-                    manifest.Entries.Sum(e => e.Size), verification.Status));
+                    manifest.Entries.Sum(e => e.Size),
+                    SnapshotVerificationStatus.Unverified));
             }
             catch { /* malformed snapshots remain discoverable through explicit verification */ }
         }

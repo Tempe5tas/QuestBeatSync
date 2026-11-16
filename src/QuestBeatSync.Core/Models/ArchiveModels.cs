@@ -4,7 +4,7 @@ public enum ArchiveLogicalRoot { CustomLevels, Playlists, Covers, SongCoreAuxili
 public enum ArchiveEntryKind { File }
 public enum ArchiveConsistencyStatus { Consistent }
 public enum QuestBackupStatus { Completed, Refused, Canceled, Failed, SourceChanged }
-public enum SnapshotVerificationStatus { Valid, NotFound, UnsupportedFormat, Corrupted }
+public enum SnapshotVerificationStatus { Valid, NotFound, UnsupportedFormat, Corrupted, Unverified }
 
 public sealed record ArchiveDevice(string Serial, QuestTransportKind TransportKind, string? AndroidModel);
 public sealed record ArchiveBeatSaber(string? VersionName, long? VersionCode);

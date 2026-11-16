@@ -162,6 +162,26 @@ public sealed class ArchiveBackupTests
         await CreateService(new FakeSource(files), new SequenceScanner(Scan(), Scan())).CreateBackupAsync(Device, Binding(Scan()));
         var summary = (await Store().ListSnapshotsAsync()).Single();
         Assert.AreEqual(Device.Serial, summary.DeviceSerial); Assert.AreEqual(1, summary.MapFolderCount); Assert.AreEqual(1, summary.PlaylistFileCount); Assert.AreEqual(6, summary.TotalLogicalBytes);
+        Assert.AreEqual(SnapshotVerificationStatus.Unverified, summary.VerificationStatus);
+    }
+
+    [TestMethod]
+    public async Task SnapshotList_DoesNotVerifyBlobs_ReportsUnverifiedEvenIfBlobCorrupted()
+    {
+        var files = new Dictionary<(ArchiveLogicalRoot, string), byte[]> { [(ArchiveLogicalRoot.CustomLevels, "Legacy/a")] = Bytes("aa") };
+        var result = await CreateService(new FakeSource(files), new SequenceScanner(Scan(), Scan())).CreateBackupAsync(Device, Binding(Scan()));
+        var entry = result.Manifest!.Entries.Single();
+        var blob = Path.Combine(_root, "blobs", "sha256", entry.BlobId[..2], entry.BlobId);
+        await File.WriteAllTextAsync(blob, "corrupted content");
+
+        // Listing must NOT verify blob hashes and must return Unverified
+        var summaries = await Store().ListSnapshotsAsync();
+        Assert.AreEqual(1, summaries.Count);
+        Assert.AreEqual(SnapshotVerificationStatus.Unverified, summaries[0].VerificationStatus);
+
+        // Explicit verification detects corruption
+        var verification = await Store().VerifySnapshotAsync(result.Manifest.SnapshotId);
+        Assert.AreEqual(SnapshotVerificationStatus.Corrupted, verification.Status);
     }
 
     [TestMethod]

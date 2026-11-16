@@ -16,6 +16,7 @@ public sealed class BackupViewModel : ViewModelBase
     private string? _snapshotId;
     private string? _createdTime;
     private string _verificationState = "Not verified";
+    private readonly Dictionary<string, SnapshotVerificationStatus> _verifiedStatuses = new(StringComparer.Ordinal);
     private SnapshotSummary? _selectedSnapshot;
 
     public BackupViewModel(IQuestBackupService? service, LibraryViewModel library, Func<QuestDevice?> selectedDevice, Func<Exception, Task> errorHandler)
@@ -51,7 +52,9 @@ public sealed class BackupViewModel : ViewModelBase
         {
             if (!SetProperty(ref _selectedSnapshot, value) || value is null) return;
             SnapshotId = value.SnapshotId; CreatedTime = value.CreatedAtUtc.ToLocalTime().ToString("g");
-            VerificationState = value.VerificationStatus.ToString();
+            VerificationState = value.VerificationStatus == SnapshotVerificationStatus.Unverified
+                ? "Not verified"
+                : value.VerificationStatus.ToString();
         }
     }
     public string SelectedQuest => _selectedDevice()?.Serial ?? "No connected Quest selected";
@@ -67,10 +70,14 @@ public sealed class BackupViewModel : ViewModelBase
     {
         if (_service is null) return;
         var snapshots = await _service.ListSnapshotsAsync().ConfigureAwait(false);
+        var enrichedSnapshots = snapshots.Select(s =>
+            _verifiedStatuses.TryGetValue(s.SnapshotId, out var status)
+                ? s with { VerificationStatus = status }
+                : s).ToArray();
         await OnUiThreadAsync(() =>
         {
             var selectedId = SnapshotId;
-            Replace(Snapshots, snapshots);
+            Replace(Snapshots, enrichedSnapshots);
             SelectedSnapshot = Snapshots.FirstOrDefault(item => string.Equals(item.SnapshotId, selectedId, StringComparison.Ordinal)) ?? Snapshots.FirstOrDefault();
         });
     }
@@ -99,8 +106,9 @@ public sealed class BackupViewModel : ViewModelBase
     private async Task VerifyAsync()
     {
         var result = await _service!.VerifySnapshotAsync(SnapshotId).ConfigureAwait(false);
-        await OnUiThreadAsync(() => VerificationState = $"{result.Status}: {result.Message}");
+        _verifiedStatuses[SnapshotId] = result.Status;
         await RefreshSnapshotsAsync().ConfigureAwait(false);
+        await OnUiThreadAsync(() => VerificationState = $"{result.Status}: {result.Message}");
     }
 
     private void Cancel() => _cancellation?.Cancel();
