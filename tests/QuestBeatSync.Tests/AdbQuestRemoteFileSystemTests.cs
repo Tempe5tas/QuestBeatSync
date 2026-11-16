@@ -58,6 +58,51 @@ public sealed class AdbQuestRemoteFileSystemTests
         }
     }
 
+    [TestMethod]
+    public async Task FindFilesAsync_UsesEscapedArgumentsAndReturnsMatches()
+    {
+        string? capturedScript = null;
+        var transport = new StubTransport(arguments =>
+        {
+            capturedScript = arguments[2];
+            return new AdbCommandResult(true, false, 0, "/remote/a/Info.dat\n/remote/b/Info.dat\n", string.Empty);
+        });
+        var fileSystem = new AdbQuestRemoteFileSystem(transport);
+
+        var matches = await fileSystem.FindFilesAsync(Device, "/remote/CustomLevels", 2, 2, "Info.dat");
+
+        Assert.AreEqual(2, matches.Count);
+        Assert.AreEqual("/remote/a/Info.dat", matches[0]);
+        Assert.AreEqual("/remote/b/Info.dat", matches[1]);
+        Assert.IsNotNull(capturedScript);
+        StringAssert.Contains(capturedScript, "find '/remote/CustomLevels' -mindepth 2 -maxdepth 2 -type f");
+        StringAssert.Contains(capturedScript, "-name 'Info.dat'");
+    }
+
+    [TestMethod]
+    public async Task ReadTextFilesAsync_BatchesFilesAndParsesSentinels()
+    {
+        string? capturedScript = null;
+        var transport = new StubTransport(arguments =>
+        {
+            capturedScript = arguments[2];
+            var output =
+                "__QBSYNC_FILE_START__|/remote/a/Info.dat\n{\"title\":\"Song A\"}\n__QBSYNC_FILE_END__|/remote/a/Info.dat\n" +
+                "__QBSYNC_FILE_START__|/remote/b/Info.dat\n{\"title\":\"Song B\"}\n__QBSYNC_FILE_END__|/remote/b/Info.dat\n";
+            return new AdbCommandResult(true, false, 0, output, string.Empty);
+        });
+        var fileSystem = new AdbQuestRemoteFileSystem(transport);
+
+        var results = await fileSystem.ReadTextFilesAsync(Device, ["/remote/a/Info.dat", "/remote/b/Info.dat"]);
+
+        Assert.AreEqual(2, results.Count);
+        Assert.AreEqual("{\"title\":\"Song A\"}", results["/remote/a/Info.dat"]);
+        Assert.AreEqual("{\"title\":\"Song B\"}", results["/remote/b/Info.dat"]);
+        Assert.IsNotNull(capturedScript);
+        StringAssert.Contains(capturedScript, "__QBSYNC_FILE_START__|/remote/a/Info.dat");
+        StringAssert.Contains(capturedScript, "__QBSYNC_FILE_START__|/remote/b/Info.dat");
+    }
+
     private sealed class StubTransport(
         Func<IReadOnlyList<string>, AdbCommandResult> shellResultFactory) : IQuestTransport
     {

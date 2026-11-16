@@ -79,85 +79,104 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             device,
             _paths.CustomLevels,
             cancellationToken).ConfigureAwait(false);
-        var maps = new List<QuestInstalledMap>(folders.Count);
 
-        foreach (var folderPath in folders)
-        {
-            if (GetRemoteName(folderPath).StartsWith(".qbsync-", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
+        var validFolders = folders
+            .Where(folderPath => !GetRemoteName(folderPath).StartsWith(".qbsync-", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
 
-            maps.Add(await ScanMapAsync(device, folderPath, warnings, cancellationToken).ConfigureAwait(false));
-        }
-
-        return new MapScanResult(maps, folders.Count);
-    }
-
-    private async Task<QuestInstalledMap> ScanMapAsync(
-        QuestDevice device,
-        string folderPath,
-        ICollection<QuestScanWarning> warnings,
-        CancellationToken cancellationToken)
-    {
-        var folderName = GetRemoteName(folderPath);
-        IReadOnlyList<string> files;
-
+        IReadOnlyList<string> infoDatFiles;
         try
         {
-            files = await _fileSystem.ListFilesAsync(device, folderPath, cancellationToken).ConfigureAwait(false);
+            infoDatFiles = await _fileSystem.FindFilesAsync(
+                device,
+                _paths.CustomLevels,
+                2,
+                2,
+                "Info.dat",
+                cancellationToken).ConfigureAwait(false);
         }
         catch (QuestRemoteFileSystemException exception)
         {
-            warnings.Add(new QuestScanWarning(folderPath, exception.Message));
-            return new QuestInstalledMap(
-                folderPath,
-                folderName,
-                false,
-                null,
-                null,
-                QuestMapIdentityStatus.Unknown,
-                Warning: exception.Message);
+            warnings.Add(new QuestScanWarning(_paths.CustomLevels, exception.Message));
+            infoDatFiles = [];
         }
 
-        var infoDatPath = files.FirstOrDefault(path =>
-            string.Equals(GetRemoteName(path), "Info.dat", StringComparison.OrdinalIgnoreCase));
-        if (infoDatPath is null)
+        var folderToInfoDat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var infoPath in infoDatFiles)
         {
-            const string message = "Info.dat was not found.";
-            warnings.Add(new QuestScanWarning(folderPath, message));
-            return new QuestInstalledMap(
-                folderPath,
-                folderName,
-                false,
-                null,
-                null,
-                QuestMapIdentityStatus.Unknown,
-                Warning: message);
+            var folder = GetParentRemotePath(infoPath);
+            folderToInfoDat.TryAdd(folder, infoPath);
         }
 
+        var filesToRead = validFolders
+            .Where(f => folderToInfoDat.ContainsKey(f))
+            .Select(f => folderToInfoDat[f])
+            .ToArray();
+
+        IReadOnlyDictionary<string, string> fileContents;
         try
         {
-            var json = await _fileSystem.ReadTextFileAsync(
+            fileContents = await _fileSystem.ReadTextFilesAsync(
                 device,
-                infoDatPath,
+                filesToRead,
                 cancellationToken).ConfigureAwait(false);
-            if (!InfoDatParser.TryParse(json, out var metadata, out var warning))
+        }
+        catch (QuestRemoteFileSystemException exception)
+        {
+            warnings.Add(new QuestScanWarning(_paths.CustomLevels, exception.Message));
+            fileContents = new Dictionary<string, string>();
+        }
+
+        var maps = new List<QuestInstalledMap>(validFolders.Length);
+        foreach (var folderPath in validFolders)
+        {
+            var folderName = GetRemoteName(folderPath);
+            if (!folderToInfoDat.TryGetValue(folderPath, out var infoDatPath))
             {
-                warnings.Add(new QuestScanWarning(infoDatPath, warning!));
-                return new QuestInstalledMap(
+                const string message = "Info.dat was not found.";
+                warnings.Add(new QuestScanWarning(folderPath, message));
+                maps.Add(new QuestInstalledMap(
+                    folderPath,
+                    folderName,
+                    false,
+                    null,
+                    null,
+                    QuestMapIdentityStatus.Unknown,
+                    Warning: message));
+                continue;
+            }
+
+            if (!fileContents.TryGetValue(infoDatPath, out var json))
+            {
+                var message = $"Could not read {infoDatPath}.";
+                warnings.Add(new QuestScanWarning(infoDatPath, message));
+                maps.Add(new QuestInstalledMap(
                     folderPath,
                     folderName,
                     true,
                     null,
                     null,
                     QuestMapIdentityStatus.Unknown,
-                    Warning: warning);
+                    Warning: message));
+                continue;
+            }
+
+            if (!InfoDatParser.TryParse(json, out var metadata, out var parseWarning))
+            {
+                warnings.Add(new QuestScanWarning(infoDatPath, parseWarning!));
+                maps.Add(new QuestInstalledMap(
+                    folderPath,
+                    folderName,
+                    true,
+                    null,
+                    null,
+                    QuestMapIdentityStatus.Unknown,
+                    Warning: parseWarning));
+                continue;
             }
 
             var identity = TryGetIdentityFromFolderName(folderName);
-
-            return new QuestInstalledMap(
+            maps.Add(new QuestInstalledMap(
                 folderPath,
                 folderName,
                 true,
@@ -167,20 +186,10 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                     ? QuestMapIdentityStatus.LocalOnly
                     : QuestMapIdentityStatus.HashIdentified,
                 identity,
-                Format: metadata.Format);
+                Format: metadata.Format));
         }
-        catch (QuestRemoteFileSystemException exception)
-        {
-            warnings.Add(new QuestScanWarning(infoDatPath, exception.Message));
-            return new QuestInstalledMap(
-                folderPath,
-                folderName,
-                true,
-                null,
-                null,
-                QuestMapIdentityStatus.Unknown,
-                Warning: exception.Message);
-        }
+
+        return new MapScanResult(maps, folders.Count);
     }
 
     private async Task<IReadOnlyList<QuestInstalledPlaylist>> ScanPlaylistsAsync(
@@ -192,53 +201,61 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
             device,
             _paths.Playlists,
             cancellationToken).ConfigureAwait(false);
-        var playlists = new List<QuestInstalledPlaylist>();
 
+        var playlistFiles = new List<(string RemotePath, string Filename, QuestPlaylistFormat Format)>();
         foreach (var remotePath in files)
         {
             var filename = GetRemoteName(remotePath);
             var format = GetPlaylistFormat(filename);
-            if (format is null)
+            if (format is not null)
             {
+                playlistFiles.Add((remotePath, filename, format.Value));
+            }
+        }
+
+        if (playlistFiles.Count == 0) return [];
+
+        IReadOnlyDictionary<string, string> fileContents;
+        try
+        {
+            fileContents = await _fileSystem.ReadTextFilesAsync(
+                device,
+                playlistFiles.Select(p => p.RemotePath).ToArray(),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (QuestRemoteFileSystemException exception)
+        {
+            warnings.Add(new QuestScanWarning(_paths.Playlists, exception.Message));
+            fileContents = new Dictionary<string, string>();
+        }
+
+        var playlists = new List<QuestInstalledPlaylist>(playlistFiles.Count);
+        foreach (var (remotePath, filename, format) in playlistFiles)
+        {
+            if (!fileContents.TryGetValue(remotePath, out var json))
+            {
+                var message = $"Could not read {remotePath}.";
+                warnings.Add(new QuestScanWarning(remotePath, message));
+                playlists.Add(new QuestInstalledPlaylist(
+                    remotePath,
+                    filename,
+                    GetFallbackPlaylistTitle(filename),
+                    0,
+                    format,
+                    message,
+                    [],
+                    false,
+                    PlaylistFileParser.GetFilenameLineage(filename)));
                 continue;
             }
 
-            playlists.Add(await ScanPlaylistAsync(
-                device,
-                remotePath,
-                filename,
-                format.Value,
-                warnings,
-                cancellationToken).ConfigureAwait(false));
-        }
-
-        return playlists
-            .GroupBy(PlaylistLogicalKey, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderByDescending(item => item.Format == QuestPlaylistFormat.BmbfJson).First())
-            .ToArray();
-    }
-
-    private async Task<QuestInstalledPlaylist> ScanPlaylistAsync(
-        QuestDevice device,
-        string remotePath,
-        string filename,
-        QuestPlaylistFormat format,
-        ICollection<QuestScanWarning> warnings,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var json = await _fileSystem.ReadTextFileAsync(
-                device,
-                remotePath,
-                cancellationToken).ConfigureAwait(false);
             PlaylistFileParser.TryParse(filename, json, out var metadata, out var warning);
             if (warning is not null)
             {
                 warnings.Add(new QuestScanWarning(remotePath, warning));
             }
 
-            return new QuestInstalledPlaylist(
+            playlists.Add(new QuestInstalledPlaylist(
                 remotePath,
                 filename,
                 metadata.PlaylistTitle,
@@ -247,22 +264,13 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
                 metadata.Warning,
                 metadata.NormalizedSongIdentities,
                 metadata.SemanticIdentityComplete,
-                metadata.FilenameLineage);
+                metadata.FilenameLineage));
         }
-        catch (QuestRemoteFileSystemException exception)
-        {
-            warnings.Add(new QuestScanWarning(remotePath, exception.Message));
-            return new QuestInstalledPlaylist(
-                remotePath,
-                filename,
-                GetFallbackPlaylistTitle(filename),
-                0,
-                format,
-                exception.Message,
-                [],
-                false,
-                PlaylistFileParser.GetFilenameLineage(filename));
-        }
+
+        return playlists
+            .GroupBy(PlaylistLogicalKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(item => item.Format == QuestPlaylistFormat.BmbfJson).First())
+            .ToArray();
     }
 
     private static QuestPlaylistFormat? GetPlaylistFormat(string filename)
@@ -308,6 +316,13 @@ public sealed class QuestBeatSaberScanner : IQuestBeatSaberScanner
         var normalized = remotePath.TrimEnd('/');
         var separatorIndex = normalized.LastIndexOf('/');
         return separatorIndex < 0 ? normalized : normalized[(separatorIndex + 1)..];
+    }
+
+    private static string GetParentRemotePath(string remotePath)
+    {
+        var normalized = remotePath.TrimEnd('/');
+        var separatorIndex = normalized.LastIndexOf('/');
+        return separatorIndex < 0 ? string.Empty : normalized[..separatorIndex];
     }
 
     private sealed record MapScanResult(IReadOnlyList<QuestInstalledMap> Maps, int FolderCount);

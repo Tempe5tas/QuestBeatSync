@@ -69,7 +69,75 @@ internal sealed class FixtureQuestRemoteFileSystem : IQuestRemoteFileSystem
         return Task.FromResult(content);
     }
 
+    public Task<IReadOnlyList<string>> FindFilesAsync(
+        QuestDevice device,
+        string remotePath,
+        int minDepth,
+        int maxDepth,
+        string? namePattern = null,
+        CancellationToken cancellationToken = default)
+    {
+        var results = new List<string>();
+        CollectFiles(remotePath, 1, minDepth, maxDepth, namePattern, results);
+        return Task.FromResult<IReadOnlyList<string>>(results.Order(StringComparer.Ordinal).ToArray());
+    }
+
+    public Task<IReadOnlyDictionary<string, string>> ReadTextFilesAsync(
+        QuestDevice device,
+        IReadOnlyList<string> remotePaths,
+        CancellationToken cancellationToken = default)
+    {
+        var results = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var path in remotePaths)
+        {
+            if (_fileContents.TryGetValue(path, out var content))
+            {
+                results[path] = content;
+            }
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<string, string>>(results);
+    }
+
+    private void CollectFiles(
+        string currentDir,
+        int currentDepth,
+        int minDepth,
+        int maxDepth,
+        string? namePattern,
+        List<string> results)
+    {
+        if (currentDepth > maxDepth) return;
+
+        if (currentDepth >= minDepth && _childFiles.TryGetValue(currentDir, out var files))
+        {
+            foreach (var file in files)
+            {
+                var fileName = GetRemoteName(file);
+                if (string.IsNullOrWhiteSpace(namePattern) ||
+                    string.Equals(fileName, namePattern, StringComparison.OrdinalIgnoreCase))
+                {
+                    results.Add(file);
+                }
+            }
+        }
+
+        if (currentDepth < maxDepth && _childDirectories.TryGetValue(currentDir, out var subdirs))
+        {
+            foreach (var subdir in subdirs)
+            {
+                CollectFiles(subdir, currentDepth + 1, minDepth, maxDepth, namePattern, results);
+            }
+        }
+    }
+
+    private static string GetRemoteName(string remotePath)
+    {
+        var normalized = remotePath.TrimEnd('/');
+        var separatorIndex = normalized.LastIndexOf('/');
+        return separatorIndex < 0 ? normalized : normalized[(separatorIndex + 1)..];
+    }
+
     private static string Join(string parentPath, string name) =>
         $"{parentPath.TrimEnd('/')}/{name}";
 }
-

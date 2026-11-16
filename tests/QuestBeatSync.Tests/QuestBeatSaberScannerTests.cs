@@ -72,6 +72,7 @@ public sealed class QuestBeatSaberScannerTests
         Assert.IsTrue(runner.RemoteCommands.Any(command => command.Contains($"test -d '\"'\"'{QuestBeatSaberPaths.Default.CustomLevels}'\"'\"'", StringComparison.Ordinal)));
         Assert.IsTrue(runner.RemoteCommands.Any(command => command.Contains($"find '\"'\"'{QuestBeatSaberPaths.Default.CustomLevels}'\"'\"' -mindepth 1 -maxdepth 1 -type d -print", StringComparison.Ordinal)));
         Assert.IsFalse(runner.RemoteCommands.Any(command => command.StartsWith("sh -c test", StringComparison.Ordinal) || command.StartsWith("sh -c find", StringComparison.Ordinal)));
+        Assert.IsTrue(runner.RemoteCommands.Count <= 10, $"Expected merged commands <= 10, but got {runner.RemoteCommands.Count}");
     }
 
     [TestMethod]
@@ -281,10 +282,21 @@ public sealed class QuestBeatSaberScannerTests
                 return Success($"{HashFolder}\n{LocalFolder}\n");
             if (command.Contains(QuestBeatSaberPaths.Default.Playlists, StringComparison.Ordinal) && command.Contains("-type f", StringComparison.Ordinal))
                 return Success();
+            if (command.Contains(QuestBeatSaberPaths.Default.CustomLevels, StringComparison.Ordinal) && command.Contains("-type f", StringComparison.Ordinal))
+                return Success($"{HashFolder}/Info.dat\n{LocalFolder}/Info.dat\n");
             if (command.Contains("-type f", StringComparison.Ordinal))
             {
                 var folder = command.Contains(Hash, StringComparison.Ordinal) ? HashFolder : LocalFolder;
                 return Success($"{folder}/Info.dat\n");
+            }
+            if (command.Contains("__QBSYNC_FILE_START__", StringComparison.Ordinal))
+            {
+                var output = string.Empty;
+                if (command.Contains(HashFolder, StringComparison.Ordinal))
+                    output += $"__QBSYNC_FILE_START__|{HashFolder}/Info.dat\n{{\"_songName\":\"Real map\",\"_levelAuthorName\":\"Mapper\"}}\n__QBSYNC_FILE_END__|{HashFolder}/Info.dat\n";
+                if (command.Contains(LocalFolder, StringComparison.Ordinal))
+                    output += $"__QBSYNC_FILE_START__|{LocalFolder}/Info.dat\n{{\"_songName\":\"Real map\",\"_levelAuthorName\":\"Mapper\"}}\n__QBSYNC_FILE_END__|{LocalFolder}/Info.dat\n";
+                return Success(output);
             }
             if (command.Contains("cat ", StringComparison.Ordinal)) return Success("{\"_songName\":\"Real map\",\"_levelAuthorName\":\"Mapper\"}");
             return Task.FromResult(new AdbProcessResult(true, false, 1, "", "unexpected remote command"));
