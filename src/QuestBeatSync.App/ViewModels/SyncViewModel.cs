@@ -8,6 +8,7 @@ namespace QuestBeatSync.App.ViewModels;
 
 public sealed class SyncViewModel : ViewModelBase
 {
+    public const int DefaultBeatSaverConcurrency = 6;
     private readonly PlaylistsViewModel _playlists;
     private readonly LibraryViewModel _library;
     private readonly IBeatSaverClient _beatSaver;
@@ -15,6 +16,7 @@ public sealed class SyncViewModel : ViewModelBase
     private readonly SyncExecutor? _executor;
     private readonly Func<QuestDevice?> _selectedDevice;
     private readonly Func<Task<QuestBeatSaberScanResult>> _scanSelectedDevice;
+    private readonly int _maxBeatSaverConcurrency;
     private SyncPlan? _plan;
     private SyncExecutionPlan? _executionPlan;
     private SyncExecutionPlan? _confirmationPlan;
@@ -35,7 +37,8 @@ public sealed class SyncViewModel : ViewModelBase
         Func<Exception, Task> errorHandler,
         SyncExecutor? executor = null,
         Func<QuestDevice?>? selectedDevice = null,
-        Func<Task<QuestBeatSaberScanResult>>? scanSelectedDevice = null)
+        Func<Task<QuestBeatSaberScanResult>>? scanSelectedDevice = null,
+        int maxBeatSaverConcurrency = DefaultBeatSaverConcurrency)
     {
         _playlists = playlists;
         _library = library;
@@ -44,6 +47,7 @@ public sealed class SyncViewModel : ViewModelBase
         _executor = executor;
         _selectedDevice = selectedDevice ?? (() => null);
         _scanSelectedDevice = scanSelectedDevice ?? (() => Task.FromResult(QuestBeatSaberScanResult.Empty));
+        _maxBeatSaverConcurrency = maxBeatSaverConcurrency > 0 ? maxBeatSaverConcurrency : DefaultBeatSaverConcurrency;
         BuildCommand = new AsyncRelayCommand(BuildAsync, () => CanBuild && !IsBuilding && !IsExecuting, errorHandler);
         ReviewExecutionCommand = new RelayCommand(RequestConfirmation, () => CanReviewExecution);
         ConfirmExecutionCommand = new AsyncRelayCommand(ExecuteConfirmedAsync, () => CanConfirmExecution, errorHandler);
@@ -141,28 +145,64 @@ public sealed class SyncViewModel : ViewModelBase
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             ResolutionMessage = $"Resolving {requirements.Length} unique maps...";
             var completed = 0;
-            foreach (var requirement in requirements)
+            var gate = new object();
+            using var semaphore = new SemaphoreSlim(_maxBeatSaverConcurrency, _maxBeatSaverConcurrency);
+
+            var tasks = requirements.Select(async requirement =>
             {
-                if (!installed.Contains(requirement.Hash))
+                if (installed.Contains(requirement.Hash))
                 {
-                    if (await _cache.IsCachedAsync(requirement.Hash))
+                    var current = Interlocked.Increment(ref completed);
+                    ResolutionMessage = $"Resolving {current}/{requirements.Length} unique maps...";
+                    return;
+                }
+
+                if (await _cache.IsCachedAsync(requirement.Hash).ConfigureAwait(false))
+                {
+                    AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
+                    lock (gate)
                     {
-                        AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
                         cached.Add(requirement.Hash);
                         _playlists.UpdateRequirement(requirement.Hash, "Yes");
                     }
-                    else
+                    var current = Interlocked.Increment(ref completed);
+                    ResolutionMessage = $"Resolving {current}/{requirements.Length} unique maps...";
+                    return;
+                }
+
+                BeatSaverLookupResult? lookup;
+                lock (gate)
+                {
+                    lookup = FindReusable(requirement.Hash);
+                }
+
+                if (lookup is null)
+                {
+                    await semaphore.WaitAsync().ConfigureAwait(false);
+                    try
                     {
-                        var lookup = FindReusable(requirement.Hash) ?? await _beatSaver.LookupAsync(new(requirement.Hash, requirement.Key));
                         AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
-                        availability[requirement.Hash] = lookup.Availability;
-                        _playlists.UpdateRequirement(requirement.Hash, "No", lookup);
-                        if (lookup.ExactHashMatched) exactLookups[requirement.Hash] = lookup;
+                        lookup = await _beatSaver.LookupAsync(new(requirement.Hash, requirement.Key)).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
                     }
                 }
 
-                ResolutionMessage = $"Resolving {++completed}/{requirements.Length} unique maps...";
-            }
+                AssertPlanningInputs(selectedDevice.Serial, requirementsRevision, buildGeneration);
+                lock (gate)
+                {
+                    availability[requirement.Hash] = lookup.Availability;
+                    _playlists.UpdateRequirement(requirement.Hash, "No", lookup);
+                    if (lookup.ExactHashMatched) exactLookups[requirement.Hash] = lookup;
+                }
+
+                var currentCompleted = Interlocked.Increment(ref completed);
+                ResolutionMessage = $"Resolving {currentCompleted}/{requirements.Length} unique maps...";
+            });
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
 
             var plan = SyncPlanner.Build(
                 playlistSnapshot,

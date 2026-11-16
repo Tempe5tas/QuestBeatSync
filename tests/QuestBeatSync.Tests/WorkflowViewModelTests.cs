@@ -55,6 +55,31 @@ public sealed class WorkflowViewModelTests
     }
 
     [TestMethod]
+    public async Task SyncPreflight_ResolvesBeatSaverLookupsConcurrently()
+    {
+        var playlist = new Playlist("Batch");
+        for (int i = 0; i < 12; i++)
+        {
+            playlist.Add(new PlaylistEntry(i.ToString("x4"), (i + 1).ToString("X40"), $"Song {i}"));
+        }
+        var client = new ConcurrentTrackingClient();
+        var library = new LibraryViewModel();
+        library.Apply(QuestBeatSaberScanResult.Empty, scanCompleted: true);
+        var playlists = new PlaylistsViewModel(new StubImporter(playlist), client, new RecordingCache(), library, _ => Task.CompletedTask);
+        var sync = new SyncViewModel(playlists, library, client, new RecordingCache(), _ => Task.CompletedTask,
+            selectedDevice: () => Connected("QUEST"), scanSelectedDevice: () => Task.FromResult(QuestBeatSaberScanResult.Empty),
+            maxBeatSaverConcurrency: 4);
+        await playlists.ImportAsync(["batch.bplist"]);
+
+        await sync.BuildCommand.ExecuteAsync();
+
+        Assert.AreEqual(12, client.LookupCallCount);
+        Assert.IsTrue(client.MaxObservedConcurrency > 1, $"Expected concurrent lookups > 1, but observed {client.MaxObservedConcurrency}");
+        Assert.IsTrue(client.MaxObservedConcurrency <= 4, $"Expected concurrency <= 4, but observed {client.MaxObservedConcurrency}");
+        Assert.AreEqual(12, sync.DownloadRequired);
+    }
+
+    [TestMethod]
     public async Task SyncPreflight_CreatesDeviceAndSourceBoundExecutionPlan()
     {
         var playlist = new Playlist(
@@ -279,6 +304,28 @@ public sealed class WorkflowViewModelTests
             LookupCallCount++;
             return Task.FromResult(new BeatSaverLookupResult(BeatSaverAvailability.Online, request.Hash, request.Key, Hash, request.Key, new("https://example.test/map.zip"), request.Hash is not null));
         }
+        public Task DownloadZipAsync(Uri downloadUri, Stream destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class ConcurrentTrackingClient : IBeatSaverClient
+    {
+        private int _currentConcurrency;
+        public int MaxObservedConcurrency { get; private set; }
+        public int LookupCallCount { get; private set; }
+
+        public async Task<BeatSaverLookupResult> LookupAsync(BeatSaverLookupRequest request, CancellationToken cancellationToken = default)
+        {
+            var active = Interlocked.Increment(ref _currentConcurrency);
+            lock (this)
+            {
+                if (active > MaxObservedConcurrency) MaxObservedConcurrency = active;
+                LookupCallCount++;
+            }
+            await Task.Delay(20, cancellationToken);
+            Interlocked.Decrement(ref _currentConcurrency);
+            return new BeatSaverLookupResult(BeatSaverAvailability.Online, request.Hash, request.Key, request.Hash ?? "HASH", request.Key, new("https://example.test/map.zip"), true);
+        }
+
         public Task DownloadZipAsync(Uri downloadUri, Stream destination, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
